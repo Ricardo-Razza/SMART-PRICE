@@ -42,7 +42,7 @@ jobs:
           port: ${{ secrets.VPS_PORT || 22 }}
           script: |
             echo "===> Atualizando código do repositório..."
-            cd ${{ secrets.VPS_DIR || '/root/smart-price' }}
+            cd ${{ secrets.VPS_DIR || '/www/SmartPrice/smart-price' }}
             git pull origin main
             echo "===> Reconstruindo e reiniciando os containers Docker..."
             docker compose up -d --build
