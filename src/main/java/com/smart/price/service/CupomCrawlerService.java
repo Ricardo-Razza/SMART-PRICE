@@ -161,6 +161,11 @@ public class CupomCrawlerService {
             }
         }
 
+        if (novos > 0) {
+            logger.info("CupomCrawlerService: {} novos cupons salvos nesta rodada. Verificando fila de anúncio avulso...", novos);
+            cupomService.processarFilaAnuncioAvulso();
+        }
+
         return novos;
     }
 

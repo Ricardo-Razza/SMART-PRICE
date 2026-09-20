@@ -19,6 +19,9 @@ import com.smart.price.entity.OfertaDescoberta;
 import com.smart.price.repository.CupomRepository;
 import com.smart.price.repository.NichoRepository;
 import com.smart.price.repository.OfertaDescobertaRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 
 @Service
 public class CupomService {
@@ -30,6 +33,37 @@ public class CupomService {
     private final CopywriterIaService copywriterIaService;
     private final TelegramNotificadorService telegramNotificadorService;
     private final OfertaDescobertaRepository ofertaDescobertaRepository;
+    private final ModoNoturnoService modoNoturnoService;
+
+    @Value("${cupons.anuncio-avulso.enabled:true}")
+    private boolean anuncioAvulsoEnabled = true;
+
+    @Value("${cupons.anuncio-avulso.intervalo-minutos:45}")
+    private long intervaloMinutosEntreAvulsos = 45;
+
+    @Value("${cupons.anuncio-avulso.min-desconto-reais:30.0}")
+    private double minDescontoReais = 30.0;
+
+    @Value("${cupons.anuncio-avulso.min-desconto-percentual:10.0}")
+    private double minDescontoPercentual = 10.0;
+
+    private LocalDateTime ultimoEnvioAvulso = null;
+
+    @Autowired
+    public CupomService(
+            CupomRepository cupomRepository,
+            NichoRepository nichoRepository,
+            CopywriterIaService copywriterIaService,
+            TelegramNotificadorService telegramNotificadorService,
+            OfertaDescobertaRepository ofertaDescobertaRepository,
+            @Autowired(required = false) ModoNoturnoService modoNoturnoService) {
+        this.cupomRepository = cupomRepository;
+        this.nichoRepository = nichoRepository;
+        this.copywriterIaService = copywriterIaService;
+        this.telegramNotificadorService = telegramNotificadorService;
+        this.ofertaDescobertaRepository = ofertaDescobertaRepository;
+        this.modoNoturnoService = modoNoturnoService;
+    }
 
     public CupomService(
             CupomRepository cupomRepository,
@@ -37,11 +71,7 @@ public class CupomService {
             CopywriterIaService copywriterIaService,
             TelegramNotificadorService telegramNotificadorService,
             OfertaDescobertaRepository ofertaDescobertaRepository) {
-        this.cupomRepository = cupomRepository;
-        this.nichoRepository = nichoRepository;
-        this.copywriterIaService = copywriterIaService;
-        this.telegramNotificadorService = telegramNotificadorService;
-        this.ofertaDescobertaRepository = ofertaDescobertaRepository;
+        this(cupomRepository, nichoRepository, copywriterIaService, telegramNotificadorService, ofertaDescobertaRepository, null);
     }
 
     @Transactional
@@ -206,7 +236,8 @@ public class CupomService {
 
     /**
      * Processa um cupom recém-descoberto pelo crawler autônomo.
-     * Se for inédito, cadastra como ativo e dispara o anúncio no Telegram imediatamente!
+     * Cupons Ouro entram na fila para anúncio avulso respeitando cadência e sarrafo.
+     * Cupons menores são salvos ativos no banco para aplicação automática em ofertas de produtos.
      */
     @Transactional
     public Optional<Cupom> processarCupomDetectado(Cupom cupom) {
@@ -224,24 +255,148 @@ public class CupomService {
         }
 
         cupom.setAtivo(true);
-        // Preserva o campo testado definido pela origem (crawler define false; cadastro manual define true).
-        // Não sobrescrever aqui garante que a quarentena do crawler funcione corretamente.
-        cupom.setAnunciadoAvulso(false);
         if (cupom.getDataCriacao() == null) {
             cupom.setDataCriacao(LocalDateTime.now());
         }
 
-        Cupom salvo = cupomRepository.save(cupom);
-        logger.info("CupomService: Novo cupom [{}] detectado e salvo com sucesso! Disparando anúncio urgente...", salvo.getCodigo());
+        // Se o cupom atende ao sarrafo de Cupom Ouro, ele fica pendente na fila (anunciadoAvulso = false)
+        // Se NÃO atende, é marcado como anunciadoAvulso = true para NÃO poluir o grupo avulso,
+        // mas permanece 100% ativo no banco de dados para parear com produtos daquele nicho!
+        boolean ouro = isCupomOuro(cupom);
+        cupom.setAnunciadoAvulso(!ouro);
 
-        // Dispara o anúncio exclusivo no Telegram
-        anunciarCupomAvulso(salvo);
+        Cupom salvo = cupomRepository.save(cupom);
+        if (ouro) {
+            logger.info("CupomService: Novo Cupom OURO [{}] (desconto: {} {}) salvo e enfileirado para anúncio avulso.",
+                    salvo.getCodigo(), salvo.getValorDesconto(), salvo.getTipoDesconto());
+        } else {
+            logger.info("CupomService: Novo cupom [{}] salvo no banco (mantido ativo para vincular em produtos; abaixo do sarrafo para post avulso).",
+                    salvo.getCodigo());
+        }
 
         return Optional.of(salvo);
     }
 
     /**
-     * Dispara o anúncio avulso e urgente do cupom para o Telegram.
+     * Avalia se o cupom possui qualidade/relevância suficiente para justificar um post avulso.
+     */
+    public boolean isCupomOuro(Cupom c) {
+        if (c == null || c.getValorDesconto() == null) {
+            return false;
+        }
+
+        BigDecimal desconto = c.getValorDesconto();
+        String tipo = c.getTipoDesconto() != null ? c.getTipoDesconto().toUpperCase() : "VALOR_FIXO";
+
+        if ("PERCENTUAL".equals(tipo)) {
+            if (desconto.compareTo(BigDecimal.valueOf(minDescontoPercentual)) < 0) {
+                return false;
+            }
+        } else {
+            if (desconto.compareTo(BigDecimal.valueOf(minDescontoReais)) < 0) {
+                return false;
+            }
+        }
+
+        // Regra de sanidade: se exigir compra mínima, a proporção do desconto deve ser relevante
+        if (c.getValorMinimoCompra() != null && c.getValorMinimoCompra().compareTo(BigDecimal.ZERO) > 0) {
+            if (!"PERCENTUAL".equals(tipo)) {
+                BigDecimal minCompra = c.getValorMinimoCompra();
+                // O valor mínimo não pode exceder 35x o desconto (ex: R$ 30 OFF para R$ 1.500 é fraco: ~2%)
+                if (minCompra.compareTo(desconto.multiply(BigDecimal.valueOf(35))) > 0) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Calcula um valor estimado em Reais para ranquear cupons na fila de prioridade.
+     */
+    public BigDecimal calcularScoreOuValorDesconto(Cupom c) {
+        if (c == null || c.getValorDesconto() == null) {
+            return BigDecimal.ZERO;
+        }
+        if ("PERCENTUAL".equalsIgnoreCase(c.getTipoDesconto())) {
+            BigDecimal base = (c.getValorMinimoCompra() != null && c.getValorMinimoCompra().compareTo(BigDecimal.ZERO) > 0)
+                    ? c.getValorMinimoCompra()
+                    : BigDecimal.valueOf(250);
+            return base.multiply(c.getValorDesconto()).divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP);
+        }
+        return c.getValorDesconto();
+    }
+
+    /**
+     * Processa a fila de cupons avulsos com anti-flood inteligente:
+     * - Dispara NO MÁXIMO 1 cupom por ciclo.
+     * - Respeita o intervalo mínimo entre postagens de cupons (ex: 45 min).
+     * - Respeita o Modo Noturno (pausa de madrugada).
+     * - Seleciona estritamente o MELHOR cupom disponível na fila.
+     */
+    @Scheduled(cron = "${cupons.anuncio-avulso.cron:0 0/15 * * * ?}")
+    public synchronized void processarFilaAnuncioAvulso() {
+        if (!anuncioAvulsoEnabled) {
+            logger.debug("CupomService: Anúncios avulsos de cupons desabilitados nas configurações.");
+            return;
+        }
+
+        if (modoNoturnoService != null && modoNoturnoService.devePausarEnvios()) {
+            logger.debug("CupomService: Modo Noturno ativo. Postagens avulsas de cupons pausadas durante o horário de descanso.");
+            return;
+        }
+
+        // Anti-Flood: Intervalo mínimo entre postagens de cupons avulsos no grupo/canal
+        if (ultimoEnvioAvulso != null) {
+            long minutosDesdeUltimo = java.time.Duration.between(ultimoEnvioAvulso, LocalDateTime.now()).toMinutes();
+            if (minutosDesdeUltimo < intervaloMinutosEntreAvulsos) {
+                logger.debug("CupomService: Cadência de cupons mantida. Último envio há {} min (mínimo exigido: {} min).",
+                        minutosDesdeUltimo, intervaloMinutosEntreAvulsos);
+                return;
+            }
+        }
+
+        List<Cupom> pendentes = cupomRepository.findByAtivoTrueAndAnunciadoAvulsoFalse();
+        if (pendentes == null || pendentes.isEmpty()) {
+            return;
+        }
+
+        // Filtra cupons válidos que atendem ao sarrafo de Cupom Ouro
+        List<Cupom> elegiveis = pendentes.stream()
+                .filter(Cupom::isValidoAgora)
+                .filter(this::isCupomOuro)
+                .sorted(Comparator.comparing(this::calcularScoreOuValorDesconto).reversed())
+                .toList();
+
+        // Cupons pendentes que NÃO são ouro ou expiraram são marcados como anunciados para não bloquear a fila
+        for (Cupom c : pendentes) {
+            if (!c.isValidoAgora() || !isCupomOuro(c)) {
+                c.setAnunciadoAvulso(true);
+                cupomRepository.save(c);
+            }
+        }
+
+        if (elegiveis.isEmpty()) {
+            logger.debug("CupomService: Nenhum cupom pendente cumpre os requisitos de 'Cupom Ouro' para anúncio avulso.");
+            return;
+        }
+
+        // Elege estritamente 1 único cupom (o de maior valor real) para envio neste ciclo
+        Cupom melhor = elegiveis.get(0);
+        logger.info("CupomService: Disparando anúncio do melhor cupom da fila [{}] (Desconto: {} {})...",
+                melhor.getCodigo(), melhor.getValorDesconto(), melhor.getTipoDesconto());
+
+        boolean enviou = anunciarCupomAvulso(melhor);
+        if (enviou) {
+            this.ultimoEnvioAvulso = LocalDateTime.now();
+            logger.info("CupomService: Cupom avulso [{}] publicado com sucesso! Próximo envio permitido em {} minutos.",
+                    melhor.getCodigo(), intervaloMinutosEntreAvulsos);
+        }
+    }
+
+    /**
+     * Dispara o anúncio avulso de um cupom específico para o Telegram.
      */
     @Transactional
     public boolean anunciarCupomAvulso(Long cupomId) {
@@ -268,10 +423,51 @@ public class CupomService {
         if (enviou) {
             cupom.setAnunciadoAvulso(true);
             cupomRepository.save(cupom);
+            this.ultimoEnvioAvulso = LocalDateTime.now();
             logger.info("CupomService: Anúncio avulso do cupom [{}] publicado no Telegram com sucesso.", cupom.getCodigo());
         }
 
         return enviou;
+    }
+
+    public boolean isAnuncioAvulsoEnabled() {
+        return anuncioAvulsoEnabled;
+    }
+
+    public void setAnuncioAvulsoEnabled(boolean anuncioAvulsoEnabled) {
+        this.anuncioAvulsoEnabled = anuncioAvulsoEnabled;
+    }
+
+    public long getIntervaloMinutosEntreAvulsos() {
+        return intervaloMinutosEntreAvulsos;
+    }
+
+    public void setIntervaloMinutosEntreAvulsos(long intervaloMinutosEntreAvulsos) {
+        this.intervaloMinutosEntreAvulsos = intervaloMinutosEntreAvulsos;
+    }
+
+    public double getMinDescontoReais() {
+        return minDescontoReais;
+    }
+
+    public void setMinDescontoReais(double minDescontoReais) {
+        this.minDescontoReais = minDescontoReais;
+    }
+
+    public double getMinDescontoPercentual() {
+        return minDescontoPercentual;
+    }
+
+    public void setMinDescontoPercentual(double minDescontoPercentual) {
+        this.minDescontoPercentual = minDescontoPercentual;
+    }
+
+    public LocalDateTime getUltimoEnvioAvulso() {
+        return ultimoEnvioAvulso;
+    }
+
+    public void setUltimoEnvioAvulso(LocalDateTime ultimoEnvioAvulso) {
+        this.ultimoEnvioAvulso = ultimoEnvioAvulso;
     }
 
     private void atualizarDadosCupom(Cupom cupom, CupomRequest req) {

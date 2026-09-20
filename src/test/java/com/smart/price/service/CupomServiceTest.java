@@ -1,6 +1,7 @@
 package com.smart.price.service;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -20,6 +21,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import com.smart.price.entity.Cupom;
 import com.smart.price.repository.CupomRepository;
 import com.smart.price.repository.NichoRepository;
+import com.smart.price.repository.OfertaDescobertaRepository;
 
 @ExtendWith(MockitoExtension.class)
 class CupomServiceTest {
@@ -37,7 +39,10 @@ class CupomServiceTest {
     private TelegramNotificadorService telegramNotificadorService;
 
     @Mock
-    private com.smart.price.repository.OfertaDescobertaRepository ofertaDescobertaRepository;
+    private OfertaDescobertaRepository ofertaDescobertaRepository;
+
+    @Mock
+    private ModoNoturnoService modoNoturnoService;
 
     private CupomService cupomService;
 
@@ -48,7 +53,8 @@ class CupomServiceTest {
                 nichoRepository,
                 copywriterIaService,
                 telegramNotificadorService,
-                ofertaDescobertaRepository
+                ofertaDescobertaRepository,
+                modoNoturnoService
         );
     }
 
@@ -89,35 +95,116 @@ class CupomServiceTest {
     }
 
     @Test
-    void deveProcessarNovoCupomIneditoESalvarEAnunciar() {
+    void deveProcessarNovoCupomIneditoESalvarSemAnuncioImediato() {
         Cupom novo = new Cupom();
-        novo.setCodigo("NOVO20");
-        novo.setValorDesconto(new BigDecimal("20"));
-        novo.setValorMinimoCompra(new BigDecimal("150"));
+        novo.setCodigo("OURO50");
+        novo.setTipoDesconto("VALOR_FIXO");
+        novo.setValorDesconto(new BigDecimal("50"));
+        novo.setValorMinimoCompra(new BigDecimal("200"));
         novo.setAtivo(true);
-        // Simula cupom capturado pelo crawler: testado=false (quarentena)
         novo.setTestado(false);
 
-        when(cupomRepository.findByCodigoIgnoreCase("NOVO20")).thenReturn(Optional.empty());
+        when(cupomRepository.findByCodigoIgnoreCase("OURO50")).thenReturn(Optional.empty());
         when(cupomRepository.save(any(Cupom.class))).thenAnswer(inv -> {
             Cupom c = inv.getArgument(0);
             c.setId(100L);
             return c;
         });
-        when(telegramNotificadorService.aplicarTagAfiliado(any())).thenReturn("https://www.mercadolivre.com.br/cupons?tag=123");
-        when(copywriterIaService.gerarCopyCupomAvulso(any(), any())).thenReturn("🔥 NOVO CUPOM LIBERADO!");
-        when(telegramNotificadorService.notificarCupomAvulso(any(), any(), any())).thenReturn(true);
 
         Optional<Cupom> processado = cupomService.processarCupomDetectado(novo);
 
         assertTrue(processado.isPresent());
-        assertEquals("NOVO20", processado.get().getCodigo());
+        assertEquals("OURO50", processado.get().getCodigo());
         assertTrue(processado.get().getAtivo());
-        // processarCupomDetectado preserva o testado da origem (false para crawler, true para cadastro manual)
         assertFalse(processado.get().getTestado());
+        // Cupom ouro fica com anunciadoAvulso=false para aguardar a fila cadenciada
+        assertFalse(processado.get().getAnunciadoAvulso());
 
-        verify(cupomRepository, org.mockito.Mockito.atLeastOnce()).save(any(Cupom.class));
-        verify(telegramNotificadorService).notificarCupomAvulso(any(), any(), any());
+        verify(cupomRepository).save(any(Cupom.class));
+        // NÃO deve disparar anúncio avulso imediatamente
+        verify(telegramNotificadorService, never()).notificarCupomAvulso(any(), any(), any());
+    }
+
+    @Test
+    void deveMarcarCupomFracoComoJaAnunciadoParaNaoPoluirCanal() {
+        Cupom fraco = new Cupom();
+        fraco.setCodigo("FRACO5");
+        fraco.setTipoDesconto("VALOR_FIXO");
+        fraco.setValorDesconto(new BigDecimal("5"));
+        fraco.setValorMinimoCompra(new BigDecimal("100"));
+        fraco.setAtivo(true);
+
+        when(cupomRepository.findByCodigoIgnoreCase("FRACO5")).thenReturn(Optional.empty());
+        when(cupomRepository.save(any(Cupom.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Optional<Cupom> processado = cupomService.processarCupomDetectado(fraco);
+
+        assertTrue(processado.isPresent());
+        // Cupom fraco é marcado como anunciadoAvulso=true para nunca ser enviado sozinho
+        assertTrue(processado.get().getAnunciadoAvulso());
+        verify(telegramNotificadorService, never()).notificarCupomAvulso(any(), any(), any());
+    }
+
+    @Test
+    void deveProcessarFilaAnuncioAvulsoComSucessoParaMelhorCupomOuro() {
+        // Cupom Fraco (deve ser descartado da fila de avulsos)
+        Cupom fraco = new Cupom();
+        fraco.setId(1L);
+        fraco.setCodigo("FRACO10");
+        fraco.setTipoDesconto("VALOR_FIXO");
+        fraco.setValorDesconto(new BigDecimal("10"));
+        fraco.setValorMinimoCompra(new BigDecimal("100"));
+        fraco.setAtivo(true);
+        fraco.setAnunciadoAvulso(false);
+
+        // Cupom Ouro 1 (R$ 50 OFF)
+        Cupom ouro1 = new Cupom();
+        ouro1.setId(2L);
+        ouro1.setCodigo("OURO50");
+        ouro1.setTipoDesconto("VALOR_FIXO");
+        ouro1.setValorDesconto(new BigDecimal("50"));
+        ouro1.setValorMinimoCompra(new BigDecimal("250"));
+        ouro1.setAtivo(true);
+        ouro1.setAnunciadoAvulso(false);
+
+        // Cupom Ouro 2 (R$ 100 OFF - Campeão)
+        Cupom ouro2 = new Cupom();
+        ouro2.setId(3L);
+        ouro2.setCodigo("OURO100");
+        ouro2.setTipoDesconto("VALOR_FIXO");
+        ouro2.setValorDesconto(new BigDecimal("100"));
+        ouro2.setValorMinimoCompra(new BigDecimal("600"));
+        ouro2.setAtivo(true);
+        ouro2.setAnunciadoAvulso(false);
+
+        when(modoNoturnoService.devePausarEnvios()).thenReturn(false);
+        when(cupomRepository.findByAtivoTrueAndAnunciadoAvulsoFalse()).thenReturn(List.of(fraco, ouro1, ouro2));
+        when(telegramNotificadorService.aplicarTagAfiliado(any())).thenReturn("https://mercadolivre.com.br/cupons?tag=1");
+        when(copywriterIaService.gerarCopyCupomAvulso(any(), any())).thenReturn("🎟️ CUPOM DESTAQUE");
+        when(telegramNotificadorService.notificarCupomAvulso(any(), any(), any())).thenReturn(true);
+        when(cupomRepository.save(any(Cupom.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        cupomService.processarFilaAnuncioAvulso();
+
+        // Fraco deve ter sido marcado como anunciadoAvulso=true para sair da fila
+        assertTrue(fraco.getAnunciadoAvulso());
+        // Ouro 2 (melhor) deve ter sido anunciado e marcado como anunciadoAvulso=true
+        assertTrue(ouro2.getAnunciadoAvulso());
+        // Ouro 1 continua não anunciado para o próximo ciclo
+        assertFalse(ouro1.getAnunciadoAvulso());
+
+        // Apenas 1 cupom avulso foi enviado ao Telegram
+        verify(telegramNotificadorService).notificarCupomAvulso(eq(ouro2), any(), any());
+    }
+
+    @Test
+    void deveRespeitarModoNoturnoNoProcessamentoDeFila() {
+        when(modoNoturnoService.devePausarEnvios()).thenReturn(true);
+
+        cupomService.processarFilaAnuncioAvulso();
+
+        verify(cupomRepository, never()).findByAtivoTrueAndAnunciadoAvulsoFalse();
+        verify(telegramNotificadorService, never()).notificarCupomAvulso(any(), any(), any());
     }
 
     @Test

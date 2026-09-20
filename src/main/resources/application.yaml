@@ -87,3 +87,9 @@ cupons:
   validador:
     enabled: ${CUPONS_VALIDADOR_ENABLED:true}
     timeout-ms: 4000 # Timeout da sonda HTTP (ms). Timeout não bloqueia — aprova por padrão.
+  anuncio-avulso:
+    enabled: ${CUPONS_ANUNCIO_AVULSO_ENABLED:true}
+    cron: "0 0/15 * * * ?" # Checagem a cada 15 minutos de cupons ouro pendentes
+    intervalo-minutos: ${CUPONS_AVULSO_INTERVALO_MINUTOS:45} # Cadência anti-flood mínima entre envios avulsos
+    min-desconto-reais: ${CUPONS_AVULSO_MIN_REAIS:30.0} # Sarrafo cupom ouro fixo (>= R$ 30)
+    min-desconto-percentual: ${CUPONS_AVULSO_MIN_PERCENTUAL:10.0} # Sarrafo cupom ouro percentual (>= 10%)

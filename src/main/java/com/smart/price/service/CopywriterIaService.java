@@ -305,37 +305,40 @@ public class CopywriterIaService {
                 ? "Compras a partir de " + moeda.format(cupom.getValorMinimoCompra())
                 : "Sem valor mínimo";
 
-        String nichoStr = (cupom.getNicho() != null) ? cupom.getNicho().getNome() : "Todo o site Mercado Livre";
+        String nichoStr = (cupom.getNicho() != null) ? cupom.getNicho().getNome() : "Produtos selecionados de todo o site";
 
         return String.format("""
-                Você é o admin mais animado e extrovertido do maior canal de achados e promoções do Brasil no Telegram.
-                Acabou de sair um CUPOM EXCLUSIVO no Mercado Livre e você não aguentou — precisa avisar todo mundo AGORA!
-                Crie um anúncio urgente, animado e que faça as pessoas correm para apertar o link antes que o cupom se esgote.
+                Você é um redator de promoções para canais no Telegram no estilo limpo, direto e profissional ('Herói da Promo').
+                Crie um anúncio de CUPOM DE DESCONTO EXCLUSIVO no Mercado Livre, altamente direto, limpo e legível.
+                SEM conversinhas, SEM introduções como 'Aqui está:' ou 'Fala pessoal!', SEM enrolação.
 
                 DADOS DO CUPOM:
                 - Código: %s
                 - Desconto: %s
                 - Compra mínima: %s
-                - Válido para: %s
+                - Categoria / Válido para: %s
                 - Descrição: %s
-                - Link de ativação (USE EXATAMENTE ESTE LINK, sem alterar): %s
 
-                INSTRUÇÕES OBRIGATÓRIAS:
-                1. ALERTA DE ABERTURA: Comece com uma frase de choque em CAIXA ALTA com emojis explosivos. Seja criativo — não use sempre a mesma frase. Exemplos de tom (NÃO copie, crie algo original): "🚨 CAPTURAMOS UM CUPOM SELVAGEM NO MERCADO LIVRE!", "🔥 GENTE, SAIU CUPOM! O ADMIN NÃO VAI DEIXAR SÓ PRA ELE!", "⚡ ALERTA VERMELHO: CUPOM NOVO EM ÁREA DE RISCO DE SUMIR!".
-                2. Destaque o código entre crases assim: `%s` — para que o membro toque no Telegram e copie em 1 toque.
-                3. Mostre o desconto, o valor mínimo e a categoria de forma visual e clara.
-                4. Urgência real: cupons do ML têm limite de ativação e somem em minutos quando o grupo descobre.
-                5. Finalize com: 👉 %s
-                6. PROIBIDO: linguagem de robô, "Excelente oportunidade", saudações corporativas, introduções como "Aqui está:".
-                7. Retorne SOMENTE o texto pronto para disparar no Telegram.
+                ESTRUTURA OBRIGATÓRIA DA MENSAGEM:
+                1. Título: 🎟️ *CUPOM DESTAQUE MERCADO LIVRE*
+                2. Código do cupom em destaque com crases para cópia em 1 toque: `%s` _(toque para copiar)_
+                3. Linha de desconto: 💥 *Desconto:* %s
+                4. Linha de compra mínima: 📦 *Válido para:* %s
+                5. Linha de categoria: 🎯 *Categoria:* %s
+                6. Aviso curto e útil: ⚠️ _Limite de ativações atingido rapidamente. Ative logo antes que encerre!_
+                7. Link curto em hiperlink: 👉 [mercadolivre.com.br/cupons](%s)
+
+                Retorne ESTRITAMENTE o texto pronto para enviar no Telegram, sem blocos de código adicionais.
                 """,
                 cupom.getCodigo(),
                 valorDesc,
                 condicaoMinima,
                 nichoStr,
-                cupom.getDescricao() != null ? cupom.getDescricao() : "não informada",
-                linkFinal,
+                cupom.getDescricao() != null ? cupom.getDescricao() : "produtos selecionados",
                 cupom.getCodigo(),
+                valorDesc,
+                condicaoMinima,
+                nichoStr,
                 linkFinal
         );
     }
@@ -381,14 +384,14 @@ public class CopywriterIaService {
         NumberFormat moeda = NumberFormat.getCurrencyInstance(LOCALE_BR);
         StringBuilder sb = new StringBuilder();
 
-        sb.append("🚨 *NOVO CUPOM LIBERADO NO MERCADO LIVRE!* 🚨\n\n");
+        sb.append("🎟️ *CUPOM DESTAQUE MERCADO LIVRE* 🎟️\n\n");
 
         String valorDesc = "PERCENTUAL".equalsIgnoreCase(cupom.getTipoDesconto())
                 ? cupom.getValorDesconto().intValue() + "% OFF"
                 : moeda.format(cupom.getValorDesconto()) + " OFF";
 
-        sb.append("🎟️ Cupom: `").append(cupom.getCodigo()).append("` _(toque para copiar)_\n");
-        sb.append("💰 *Desconto:* ").append(valorDesc).append("\n");
+        sb.append("🏷️ Código: `").append(cupom.getCodigo()).append("` _(toque para copiar)_\n");
+        sb.append("💥 *Desconto:* ").append(valorDesc).append("\n");
 
         if (cupom.getValorMinimoCompra() != null && cupom.getValorMinimoCompra().compareTo(BigDecimal.ZERO) > 0) {
             sb.append("📦 *Válido para compras a partir de:* ").append(moeda.format(cupom.getValorMinimoCompra())).append("\n");
@@ -397,15 +400,15 @@ public class CopywriterIaService {
         if (cupom.getNicho() != null) {
             sb.append("🎯 *Categoria:* ").append(cupom.getNicho().getNome()).append("\n");
         } else {
-            sb.append("🎯 *Válido em produtos selecionados de todo o site!*\n");
+            sb.append("🎯 *Categoria:* Válido em produtos selecionados\n");
         }
 
         if (cupom.getDescricao() != null && !cupom.getDescricao().isBlank()) {
-            sb.append("ℹ️ ").append(cupom.getDescricao()).append("\n");
+            sb.append("ℹ️ _").append(cupom.getDescricao().trim()).append("_\n");
         }
 
-        sb.append("\n⏳ *CORRE:* Os cupons do Mercado Livre possuem limite de ativação e costumam acabar rapidamente!\n\n");
-        sb.append("🛒 *Ative seu cupom e garanta o desconto:*\n").append(linkFinal);
+        sb.append("\n⚠️ _Limite de ativações atingido rapidamente. Ative logo antes que encerre!_\n\n");
+        sb.append("👉 [mercadolivre.com.br/cupons](").append(linkFinal).append(")");
 
         return sb.toString();
     }
