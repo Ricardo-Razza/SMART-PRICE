@@ -11,7 +11,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
@@ -163,9 +163,11 @@ public class MercadoLivrePesquisaPorNomeService {
                     continue;
                 }
 
-                int coletadosNaCategoria = 0;
+                List<CompletableFuture<List<OfertaDescoberta>>> futures = new ArrayList<>();
+                int limiteItens = 0;
+
                 for (Map<String, Object> itemHl : content) {
-                    if (coletadosNaCategoria >= 10) {
+                    if (limiteItens >= 6) {
                         break;
                     }
 
@@ -184,35 +186,48 @@ public class MercadoLivrePesquisaPorNomeService {
                         continue;
                     }
 
+                    limiteItens++;
+
+                    // Dispara a consulta dos dados e itens do produto de forma paralela e não bloqueante
+                    futures.add(CompletableFuture.supplyAsync(() -> {
+                        try {
+                            String urlProduto = String.format("%s/products/%s", baseUrl, produtoId);
+                            ResponseEntity<Map> respProd = restTemplate.exchange(URI.create(urlProduto), HttpMethod.GET, entity, Map.class);
+                            if (respProd.getStatusCode().is2xxSuccessful() && respProd.getBody() != null) {
+                                Map<String, Object> prodData = respProd.getBody();
+                                Object statusProd = prodData.get("status");
+                                if (statusProd instanceof String s && !"active".equalsIgnoreCase(s)) {
+                                    return Collections.<OfertaDescoberta>emptyList();
+                                }
+
+                                String nomeProduto = (String) prodData.get("name");
+                                String fotoUrl = extrairFotoUrl(prodData);
+
+                                return extrairItensParaOfertaDescoberta(
+                                        produtoId, nomeProduto, "Em Alta " + (nicho != null ? nicho.getNome() : catId), nicho, fotoUrl, headers);
+                            }
+                        } catch (HttpStatusCodeException ex) {
+                            if (ex.getStatusCode().value() == 404) {
+                                cacheSemVencedores.put(produtoId, LocalDateTime.now());
+                            } else if (ex.getStatusCode().value() == 429) {
+                                tratarRateLimit();
+                            }
+                        } catch (Exception e) {
+                            logger.debug("MercadoLivrePesquisaPorNomeService: Falha ao obter dados do produto {}: {}", produtoId, e.getMessage());
+                        }
+                        return Collections.<OfertaDescoberta>emptyList();
+                    }));
+                }
+
+                // Aguarda a conclusão de todos os itens da categoria em paralelo
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+                for (CompletableFuture<List<OfertaDescoberta>> f : futures) {
                     try {
-                        String urlProduto = String.format("%s/products/%s", baseUrl, produtoId);
-                        ResponseEntity<Map> respProd = restTemplate.exchange(URI.create(urlProduto), HttpMethod.GET, entity, Map.class);
-                        if (respProd.getStatusCode().is2xxSuccessful() && respProd.getBody() != null) {
-                            Map<String, Object> prodData = respProd.getBody();
-                            Object statusProd = prodData.get("status");
-                            if (statusProd instanceof String s && !"active".equalsIgnoreCase(s)) {
-                                continue;
-                            }
-
-                            String nomeProduto = (String) prodData.get("name");
-                            String fotoUrl = extrairFotoUrl(prodData);
-
-                            List<OfertaDescoberta> ofertasDoItem = extrairItensParaOfertaDescoberta(
-                                    produtoId, nomeProduto, "Em Alta " + (nicho != null ? nicho.getNome() : catId), nicho, fotoUrl, headers);
-
-                            if (!ofertasDoItem.isEmpty()) {
-                                ofertas.addAll(ofertasDoItem);
-                                coletadosNaCategoria++;
-                            }
+                        List<OfertaDescoberta> res = f.get();
+                        if (res != null && !res.isEmpty()) {
+                            ofertas.addAll(res);
                         }
-                    } catch (HttpStatusCodeException ex) {
-                        if (ex.getStatusCode().value() == 404) {
-                            cacheSemVencedores.put(produtoId, LocalDateTime.now());
-                        } else if (ex.getStatusCode().value() == 429) {
-                            tratarRateLimit();
-                        }
-                    } catch (Exception e) {
-                        logger.debug("MercadoLivrePesquisaPorNomeService: Falha ao obter dados do produto {}: {}", produtoId, e.getMessage());
+                    } catch (Exception ignored) {
                     }
                 }
             } catch (HttpStatusCodeException ex) {
