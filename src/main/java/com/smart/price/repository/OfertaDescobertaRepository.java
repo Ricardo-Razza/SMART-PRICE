@@ -24,14 +24,12 @@ public interface OfertaDescobertaRepository extends JpaRepository<OfertaDescober
     Optional<OfertaDescoberta> findFirstByMlbIdOrderByPrecoAsc(String mlbId);
 
     /**
-     * Busca a última ocorrência do produto naquele nicho específico,
-     * permitindo validar se passaram os ciclos mínimos de quarentena.
+     * Busca a última ocorrência do produto no nicho para controle de intervalo mínimo de publicação.
      */
     Optional<OfertaDescoberta> findFirstByMlbIdAndNichoOrderByDataDescobertaDesc(String mlbId, Nicho nicho);
 
     /**
-     * Busca a última ocorrência do produto naquele nicho específico (por MLB ID ou URL),
-     * permitindo validar se passaram os ciclos mínimos de quarentena mesmo com IDs alternativos.
+     * Busca a última ocorrência do produto no nicho (por MLB ID ou URL) para controle de repetição.
      */
     @Query("SELECT o FROM OfertaDescoberta o WHERE (o.mlbId = :mlbId OR o.url = :url) AND o.nicho = :nicho ORDER BY o.dataDescoberta DESC LIMIT 1")
     Optional<OfertaDescoberta> findUltimaPublicacaoNoNicho(

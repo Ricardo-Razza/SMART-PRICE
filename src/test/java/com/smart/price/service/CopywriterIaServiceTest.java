@@ -26,8 +26,7 @@ class CopywriterIaServiceTest {
 
     @BeforeEach
     void setUp() {
-        copywriterIaService = new CopywriterIaService(restTemplate);
-        ReflectionTestUtils.setField(copywriterIaService, "enabled", false);
+        copywriterIaService = new CopywriterIaService();
     }
 
     @Test

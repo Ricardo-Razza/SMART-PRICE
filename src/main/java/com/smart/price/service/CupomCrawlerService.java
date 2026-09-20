@@ -94,8 +94,7 @@ public class CupomCrawlerService {
     }
 
     /**
-     * Agendamento autônomo: varre os feeds a cada 5 minutos (configurável).
-     * Roda 100% silencioso se não houver cupons novos.
+     * Varredura periódica de fontes públicas de cupons.
      */
     @Scheduled(cron = "${cupons.crawler.cron:0 0/5 * * * ?}")
     public void executarCicloCrawler() {
@@ -104,12 +103,12 @@ public class CupomCrawlerService {
             return;
         }
 
-        logger.debug("CupomCrawlerService: Iniciando ciclo autônomo de busca de cupons do Mercado Livre...");
+        logger.debug("CupomCrawlerService: Executando rotina de verificação de cupons...");
         int novosCadastrados = executarVarreduraManual();
         if (novosCadastrados > 0) {
-            logger.info("CupomCrawlerService: Ciclo finalizado com sucesso! {} novos cupons descobertos e anunciados.", novosCadastrados);
+            logger.info("CupomCrawlerService: Rotina finalizada: {} novos cupons registrados.", novosCadastrados);
         } else {
-            logger.debug("CupomCrawlerService: Nenhum cupom novo descoberto nesta rodada. Silêncio mantido.");
+            logger.debug("CupomCrawlerService: Nenhum cupom novo encontrado nesta execução.");
         }
     }
 
@@ -352,8 +351,8 @@ public class CupomCrawlerService {
         boolean validado = cupomValidadorService.validarCupomAutomaticamente(cupom);
         cupom.setTestado(validado);
         cupom.setAnunciadoAvulso(false);
-        cupom.setObservacao("Capturado automaticamente via crawler autônomo em " + LocalDateTime.now()
-                + (validado ? " | Validado automaticamente ✅" : " | Em quarentena — validação falhou ⚠️"));
+        cupom.setObservacao("Registrado via crawler em " + LocalDateTime.now()
+                + (validado ? " [Status: Validado]" : " [Status: Pendente]"));
 
         return cupom;
     }
@@ -483,8 +482,8 @@ public class CupomCrawlerService {
         boolean validado = cupomValidadorService.validarCupomAutomaticamente(cupom);
         cupom.setTestado(validado);
         cupom.setAnunciadoAvulso(false);
-        cupom.setObservacao("Capturado automaticamente via crawler autônomo em " + LocalDateTime.now()
-                + (validado ? " | Validado automaticamente ✅" : " | Em quarentena — validação falhou ⚠️"));
+        cupom.setObservacao("Registrado via crawler em " + LocalDateTime.now()
+                + (validado ? " [Status: Validado]" : " [Status: Pendente]"));
 
         return Optional.of(cupom);
     }

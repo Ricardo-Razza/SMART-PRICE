@@ -76,9 +76,8 @@ public class CuradoriaOfertasService {
     }
 
     /**
-     * Executa a busca rotativa para os termos do nicho (FIFO por data da última busca),
-     * aplica filtros de anti-duplicação por ciclos, diversificação por subcategoria,
-     * validação de pontuação mínima ("Score de Ouro") e elege as melhores ofertas.
+     * Realiza a curadoria de ofertas do nicho aplicando regras de negócio:
+     * controle de repetição por ciclo, diversificação por subcategoria e pontuação mínima de relevância.
      */
     @Transactional
     public List<OfertaDescoberta> curarMelhoresOfertasDoNicho(Nicho nicho) {
@@ -90,7 +89,7 @@ public class CuradoriaOfertasService {
         List<ProvedorLojaService> provedoresAtivos = provedorLojaHub.getProvedoresAtivos();
         List<OfertaDescoberta> candidatosBrutos = new ArrayList<>();
 
-        // 1. Mineração autônoma de ofertas em alta / destaques por categoria oficial
+        // 1. Coleta inicial de ofertas em destaque por categoria oficial
         for (ProvedorLojaService provedor : provedoresAtivos) {
             try {
                 List<OfertaDescoberta> emAlta = provedor.buscarOfertasEmAlta(nicho);
@@ -262,7 +261,7 @@ public class CuradoriaOfertasService {
                 }
             }
 
-            // 6. Cálculo de Score de Ouro (qualidade e relevância)
+            // 6. Cálculo da pontuação de relevância
             int score = calculadorScoreOferta.calcularScore(oferta);
             oferta.setScoreQualidade(score);
 

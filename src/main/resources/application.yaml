@@ -42,22 +42,16 @@ monitoramento:
     enabled: ${MODO_NOTURNO_ENABLED:true}
     inicio: ${MODO_NOTURNO_INICIO:23:00} # Início do horário noturno de descanso
     fim: ${MODO_NOTURNO_FIM:07:30} # Fim do horário noturno
-    fuso-horario: ${MODO_NOTURNO_FUSO:America/Sao_Paulo} # Fuso de Brasília mesmo em VPS UTC
-    pausar-envios: ${MODO_NOTURNO_PAUSAR:true} # Se true, pausa envios de madrugada. Se false, envia silencioso sem som
+    fuso-horario: ${MODO_NOTURNO_FUSO:America/Sao_Paulo}
+    pausar-envios: ${MODO_NOTURNO_PAUSAR:true}
   curadoria:
     horas-anti-duplicacao: 24
-    min-ciclos-anti-duplicacao: 3 # Mínimo de 3 ciclos daquele nicho para permitir republicar o mesmo produto
-    termos-por-ciclo: 5 # Quantidade de termos pesquisados a cada rodada (rotação justa FIFO)
-    max-ofertas-por-nicho: 2 # No máximo 1 ou 2 promoções selecionadas a cada 15 minutos
+    min-ciclos-anti-duplicacao: 3
+    termos-por-ciclo: 5
+    max-ofertas-por-nicho: 2
     minimo-desconto-percentual: 5
-    score-minimo: 60 # Sarrafo de qualidade para Ofertas Ouro (0 a 100)
+    score-minimo: ${CURADORIA_SCORE_MINIMO:20}
     delay-ms: 600
-
-ia:
-  gemini:
-    enabled: ${IA_GEMINI_ENABLED:true}
-    api-key: ${GEMINI_API_KEY:}
-    model: ${IA_GEMINI_MODEL:gemini-3.6-flash}
 
 telegram:
   bot:
@@ -79,10 +73,10 @@ cupons:
     max-horas-ttl: 12
   validador:
     enabled: ${CUPONS_VALIDADOR_ENABLED:true}
-    timeout-ms: 4000 # Timeout da sonda HTTP (ms). Timeout não bloqueia — aprova por padrão.
+    timeout-ms: 4000
   anuncio-avulso:
     enabled: ${CUPONS_ANUNCIO_AVULSO_ENABLED:true}
-    cron: "0 0/15 * * * ?" # Checagem a cada 15 minutos de cupons ouro pendentes
-    intervalo-minutos: ${CUPONS_AVULSO_INTERVALO_MINUTOS:45} # Cadência anti-flood mínima entre envios avulsos
-    min-desconto-reais: ${CUPONS_AVULSO_MIN_REAIS:30.0} # Sarrafo cupom ouro fixo (>= R$ 30)
-    min-desconto-percentual: ${CUPONS_AVULSO_MIN_PERCENTUAL:10.0} # Sarrafo cupom ouro percentual (>= 10%)
+    cron: "0 0/15 * * * ?"
+    intervalo-minutos: ${CUPONS_AVULSO_INTERVALO_MINUTOS:45} # Intervalo mínimo entre notificações avulsas
+    min-desconto-reais: ${CUPONS_AVULSO_MIN_REAIS:30.0} # Desconto mínimo fixo para publicação avulsa
+    min-desconto-percentual: ${CUPONS_AVULSO_MIN_PERCENTUAL:10.0} # Desconto mínimo percentual para publicação avulsa

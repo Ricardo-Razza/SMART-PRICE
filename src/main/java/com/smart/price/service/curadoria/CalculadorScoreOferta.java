@@ -7,10 +7,8 @@ import org.springframework.stereotype.Component;
 import com.smart.price.entity.OfertaDescoberta;
 
 /**
- * Calcula a pontuação de qualidade e relevância de uma oferta (0 a 100 pontos).
- * Apenas ofertas que superarem a nota de corte ("Score de Ouro") serão elegíveis
- * para publicação, eliminando ofertas mornas e garantindo que o grupo só receba
- * oportunidades reais de alta conversão.
+ * Calcula a pontuação de relevância de uma oferta (0 a 100 pontos)
+ * com base em desconto percentual, histórico de preço, cupom e frete.
  */
 @Component
 public class CalculadorScoreOferta {
