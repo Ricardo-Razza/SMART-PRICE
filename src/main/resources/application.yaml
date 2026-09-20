@@ -1,0 +1,89 @@
+spring:
+  application:
+    name: smart-price-monitor
+
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/smart_price_telegram?useSSL=false&serverTimezone=America/Sao_Paulo&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: none
+        dialect: org.hibernate.dialect.MySQLDialect
+
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+mercadolivre:
+  api:
+    base-url: https://api.mercadolibre.com
+    client-id: ${ML_CLIENT_ID:}
+    client-secret: ${ML_CLIENT_SECRET:}
+    auth-url: https://api.mercadolibre.com/oauth/token
+    access-token: ${MERCADO_LIVRE_ACCESS_TOKEN:}
+  provedor:
+    enabled: ${ML_PROVEDOR_ENABLED:true}
+  monitor:
+    legado:
+      enabled: false
+
+monitoramento:
+  nichos:
+    cron: "0 0/15 * * * ?" # A cada 15 minutos
+  modo-noturno:
+    enabled: ${MODO_NOTURNO_ENABLED:true}
+    inicio: ${MODO_NOTURNO_INICIO:23:00} # Início do horário noturno de descanso
+    fim: ${MODO_NOTURNO_FIM:07:30} # Fim do horário noturno
+    fuso-horario: ${MODO_NOTURNO_FUSO:America/Sao_Paulo} # Fuso de Brasília mesmo em VPS UTC
+    pausar-envios: ${MODO_NOTURNO_PAUSAR:true} # Se true, pausa envios de madrugada. Se false, envia silencioso sem som
+  curadoria:
+    horas-anti-duplicacao: 24
+    min-ciclos-anti-duplicacao: 3 # Mínimo de 3 ciclos daquele nicho para permitir republicar o mesmo produto
+    termos-por-ciclo: 5 # Quantidade de termos pesquisados a cada rodada (rotação justa FIFO)
+    max-ofertas-por-nicho: 2 # No máximo 1 ou 2 promoções selecionadas a cada 15 minutos
+    minimo-desconto-percentual: 5
+    score-minimo: 60 # Sarrafo de qualidade para Ofertas Ouro (0 a 100)
+    delay-ms: 600
+
+ia:
+  gemini:
+    enabled: ${IA_GEMINI_ENABLED:true}
+    api-key: ${GEMINI_API_KEY:}
+    model: ${IA_GEMINI_MODEL:gemini-3.6-flash}
+
+telegram:
+  bot:
+    enabled: ${TELEGRAM_BOT_ENABLED:true}
+    token: ${TELEGRAM_BOT_TOKEN:}
+    chat-id: ${TELEGRAM_CHAT_ID:@smartpriceofertas}
+
+afiliado:
+  mercadolivre:
+    matt-tool: ${ML_MATT_TOOL:32843307}
+    matt-word: ${ML_MATT_WORD:smartpricetele}
+    force-in-app: ${ML_FORCE_IN_APP:true}
+    tag: ${ML_AFILIADO_TAG:matt_tool=32843307&matt_word=smartpricetele&forceInApp=true}
+
+cupons:
+  crawler:
+    enabled: ${CUPONS_CRAWLER_ENABLED:true}
+    cron: "0 0/5 * * * ?" # A cada 5 minutos
+    fontes:
+      - "https://t.me/s/MercadoCuponsBR"
+      - "https://t.me/s/promosdorafa"
+      - "https://t.me/s/PromoCupons_Brasil"
+  monitor:
+    enabled: ${CUPONS_MONITOR_ENABLED:true}
+    cron: "0 0/5 * * * ?" # A cada 5 minutos
+    max-horas-ttl: 12
+  validador:
+    enabled: ${CUPONS_VALIDADOR_ENABLED:true}
+    timeout-ms: 4000 # Timeout da sonda HTTP (ms). Timeout não bloqueia — aprova por padrão.

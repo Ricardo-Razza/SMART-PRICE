@@ -1,0 +1,51 @@
+name: CI/CD - Test & Deploy VPS
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: # Permite disparar o deploy manualmente pela aba Actions do GitHub
+
+jobs:
+  test:
+    name: 🧪 Testes Unitários
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do Repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'maven'
+
+      - name: Dar permissão ao Maven Wrapper
+        run: chmod +x ./mvnw
+
+      - name: Executar Testes
+        run: ./mvnw clean test -B
+
+  deploy:
+    name: 🚀 Deploy na VPS Hostinger
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Executar Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            echo "===> Atualizando código do repositório..."
+            cd ${{ secrets.VPS_DIR || '/root/smart-price' }}
+            git pull origin main
+            echo "===> Reconstruindo e reiniciando os containers Docker..."
+            docker compose up -d --build
+            echo "===> Verificando status dos containers..."
+            docker compose ps
+            echo "===> Deploy concluído com sucesso!"
