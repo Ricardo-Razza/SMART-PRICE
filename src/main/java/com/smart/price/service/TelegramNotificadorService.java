@@ -18,7 +18,6 @@ import com.smart.price.entity.Nicho;
 import com.smart.price.entity.OfertaDescoberta;
 
 @Service
-@org.springframework.context.annotation.Primary
 public class TelegramNotificadorService implements NotificadorOfertasService {
 
     private static final Logger logger = LoggerFactory.getLogger(TelegramNotificadorService.class);

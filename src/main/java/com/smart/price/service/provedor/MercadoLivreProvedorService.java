@@ -125,13 +125,19 @@ public class MercadoLivreProvedorService implements ProvedorLojaService {
         return urlLimpa + separator + paramsAfiliado;
     }
 
+    private static final java.util.regex.Pattern PATTERN_MATT_TOOL = java.util.regex.Pattern.compile("([&?])matt_tool=[^&]*");
+    private static final java.util.regex.Pattern PATTERN_MATT_WORD = java.util.regex.Pattern.compile("([&?])matt_word=[^&]*");
+    private static final java.util.regex.Pattern PATTERN_FORCE_IN_APP = java.util.regex.Pattern.compile("([&?])forceInApp=[^&]*");
+    private static final java.util.regex.Pattern PATTERN_QUESTION_AMP = java.util.regex.Pattern.compile("\\?&");
+    private static final java.util.regex.Pattern PATTERN_DOUBLE_AMP = java.util.regex.Pattern.compile("&&+");
+
     private String limparParametrosAfiliadosAntigos(String url) {
         if (url == null) return "";
-        String limpa = url.replaceAll("([&?])matt_tool=[^&]*", "$1")
-                .replaceAll("([&?])matt_word=[^&]*", "$1")
-                .replaceAll("([&?])forceInApp=[^&]*", "$1")
-                .replaceAll("\\?&", "?")
-                .replaceAll("&&+", "&");
+        String limpa = PATTERN_MATT_TOOL.matcher(url).replaceAll("$1");
+        limpa = PATTERN_MATT_WORD.matcher(limpa).replaceAll("$1");
+        limpa = PATTERN_FORCE_IN_APP.matcher(limpa).replaceAll("$1");
+        limpa = PATTERN_QUESTION_AMP.matcher(limpa).replaceAll("?");
+        limpa = PATTERN_DOUBLE_AMP.matcher(limpa).replaceAll("&");
         if (limpa.endsWith("?") || limpa.endsWith("&")) {
             limpa = limpa.substring(0, limpa.length() - 1);
         }

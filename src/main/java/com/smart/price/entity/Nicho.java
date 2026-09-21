@@ -53,6 +53,9 @@ Nicho {
     @Column(name = "telegram_chat_id", length = 100)
     private String telegramChatId;
 
+    @Column(name = "whatsapp_group_id", length = 100)
+    private String whatsappGroupId;
+
     @JsonIgnore
     @OneToMany(mappedBy = "nicho", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<TermoBusca> termos = new ArrayList<>();

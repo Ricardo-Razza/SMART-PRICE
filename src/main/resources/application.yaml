@@ -59,6 +59,19 @@ telegram:
     token: ${TELEGRAM_BOT_TOKEN:}
     chat-id: ${TELEGRAM_CHAT_ID:@smartpriceofertas}
 
+whatsapp:
+  enabled: ${WHATSAPP_ENABLED:true}
+  api-url: ${WHATSAPP_API_URL:http://localhost:8081}
+  api-key: ${WHATSAPP_API_KEY:smartprice_whatsapp_secret_key}
+  instance-name: ${WHATSAPP_INSTANCE_NAME:smartprice}
+  group-id: ${WHATSAPP_GROUP_ID:120363430670947700@g.us}
+
+afiliado:
+  mercadolivre:
+    matt-tool: ${ML_MATT_TOOL:32843307}
+    matt-word: ${ML_MATT_WORD:smartpricetele}
+    force-in-app: ${ML_FORCE_IN_APP:true}
+    tag: ${ML_AFILIADO_TAG:matt_tool=32843307&matt_word=smartpricetele&forceInApp=true}
 cupons:
   crawler:
     enabled: ${CUPONS_CRAWLER_ENABLED:true}

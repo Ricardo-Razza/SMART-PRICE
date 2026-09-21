@@ -100,6 +100,7 @@ public class NichoController {
         nicho.setAtivo(req.getAtivo() != null ? req.getAtivo() : true);
         nicho.setCategoriaMlb(req.getCategoriaMlb());
         nicho.setTelegramChatId(req.getTelegramChatId());
+        nicho.setWhatsappGroupId(req.getWhatsappGroupId());
 
         if (req.getTermos() != null) {
             for (String t : req.getTermos()) {
@@ -109,6 +110,27 @@ public class NichoController {
 
         Nicho salvo = nichoRepository.save(nicho);
         return ResponseEntity.created(URI.create("/api/nichos/" + salvo.getId())).body(toResponseDTO(salvo));
+    }
+
+    /**
+     * Atualiza os dados de um nicho existente (nome, categoria MLB, Telegram Chat ID, WhatsApp Group ID, ativo).
+     */
+    @PutMapping("/{id}")
+    public ResponseEntity<NichoResponseDTO> atualizarNicho(
+            @PathVariable Long id, @Valid @RequestBody NichoRequest req) {
+        return nichoRepository.findById(id)
+                .map(nicho -> {
+                    nicho.setNome(req.getNome());
+                    if (req.getAtivo() != null) {
+                        nicho.setAtivo(req.getAtivo());
+                    }
+                    nicho.setCategoriaMlb(req.getCategoriaMlb());
+                    nicho.setTelegramChatId(req.getTelegramChatId());
+                    nicho.setWhatsappGroupId(req.getWhatsappGroupId());
+                    Nicho atualizado = nichoRepository.save(nicho);
+                    return ResponseEntity.ok(toResponseDTO(atualizado));
+                })
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     /**
@@ -231,6 +253,7 @@ public class NichoController {
         dto.setTotalCiclos(n.getTotalCiclos());
         dto.setCategoriaMlb(n.getCategoriaMlb());
         dto.setTelegramChatId(n.getTelegramChatId());
+        dto.setWhatsappGroupId(n.getWhatsappGroupId());
         return dto;
     }
 }

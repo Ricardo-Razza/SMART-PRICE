@@ -29,6 +29,11 @@ services:
       TELEGRAM_BOT_ENABLED: ${TELEGRAM_BOT_ENABLED:-true}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-@smartpriceofertas}
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      WHATSAPP_API_URL: ${WHATSAPP_API_URL:-http://evolution-api:8080}
+      WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:-smartprice_whatsapp_secret_key}
+      WHATSAPP_INSTANCE_NAME: ${WHATSAPP_INSTANCE_NAME:-smartprice}
+      WHATSAPP_GROUP_ID: ${WHATSAPP_GROUP_ID:-}
       ML_MATT_TOOL: ${ML_MATT_TOOL:-}
       ML_MATT_WORD: ${ML_MATT_WORD:-}
       ML_FORCE_IN_APP: ${ML_FORCE_IN_APP:-true}
@@ -43,6 +48,63 @@ services:
       TZ: America/Sao_Paulo
     volumes:
       - app_logs:/app/logs
+    depends_on:
+      - evolution-api
+
+  # Evolution API v2 para automação e envio em grupos do WhatsApp
+  evolution-api:
+    image: evoapicloud/evolution-api:latest
+    container_name: evolution-api
+    restart: unless-stopped
+    ports:
+      - "${EVOLUTION_PORT:-8081}:8080"
+    environment:
+      SERVER_URL: ${WHATSAPP_SERVER_URL:-http://localhost:8081}
+      AUTHENTICATION_API_KEY: ${WHATSAPP_API_KEY:-smartprice_whatsapp_secret_key}
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: "postgresql"
+      DATABASE_CONNECTION_URI: "postgresql://evolution:evolution_secret@evolution-db:5432/evolution?schema=public"
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      DATABASE_SAVE_DATA_MESSAGES: "false"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: "redis://evolution-redis:6379/6"
+      CACHE_REDIS_PREFIX_KEY: "evolution"
+      CONFIG_SESSION_PHONE_CLIENT: "SmartPrice Monitor"
+      CONFIG_SESSION_PHONE_NAME: "Chrome"
+      TZ: America/Sao_Paulo
+    volumes:
+      - evolution_instances:/evolution/instances
+    depends_on:
+      evolution-db:
+        condition: service_healthy
+      evolution-redis:
+        condition: service_started
+
+  # Cache Redis leve para sessões e fila do WhatsApp
+  evolution-redis:
+    image: redis:alpine
+    container_name: evolution-redis
+    restart: unless-stopped
+
+  # Banco Postgres isolado e leve para a Evolution API persistir sessões do WhatsApp
+  evolution-db:
+    image: postgres:16-alpine
+    container_name: evolution-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: evolution_secret
+      POSTGRES_DB: evolution
+      TZ: America/Sao_Paulo
+    volumes:
+      - evolution_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   # Banco isolado no Docker (OPCIONAL: só inicia se usar 'docker compose --profile with-mysql up -d')
   mysql:
@@ -76,4 +138,8 @@ volumes:
   mysql_data:
     driver: local
   app_logs:
+    driver: local
+  evolution_instances:
+    driver: local
+  evolution_db_data:
     driver: local

@@ -20,6 +20,7 @@ public class NichoResponseDTO {
     private Integer totalCiclos;
     private String categoriaMlb;
     private String telegramChatId;
+    private String whatsappGroupId;
     private List<TermoBuscaDTO> termos;
 
     public NichoResponseDTO(Long id, String nome, Boolean ativo, LocalDateTime dataUltimaBusca, List<TermoBuscaDTO> termos) {

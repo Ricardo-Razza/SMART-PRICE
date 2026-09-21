@@ -24,6 +24,7 @@ public class NichoRequest {
     private String categoriaMlb;
 
     private String telegramChatId;
+    private String whatsappGroupId;
 
     private List<String> termos;
 }
