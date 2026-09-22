@@ -37,7 +37,7 @@ mercadolivre:
 
 monitoramento:
   nichos:
-    cron: "0 0/15 * * * ?" # A cada 15 minutos
+    cron: "0 0/5 * * * ?" # A cada 5 minutos
   modo-noturno:
     enabled: ${MODO_NOTURNO_ENABLED:true}
     inicio: ${MODO_NOTURNO_INICIO:23:00} # Início do horário noturno de descanso
@@ -45,19 +45,20 @@ monitoramento:
     fuso-horario: ${MODO_NOTURNO_FUSO:America/Sao_Paulo}
     pausar-envios: ${MODO_NOTURNO_PAUSAR:true}
   curadoria:
-    horas-anti-duplicacao: 24
-    min-ciclos-anti-duplicacao: 3
+    horas-anti-duplicacao: 12
+    min-ciclos-anti-duplicacao: 2
     termos-por-ciclo: 5
-    max-ofertas-por-nicho: 2
+    max-ofertas-por-nicho: 3
     minimo-desconto-percentual: 5
     score-minimo: ${CURADORIA_SCORE_MINIMO:20}
-    delay-ms: 600
+    delay-ms: 400
 
 telegram:
   bot:
     enabled: ${TELEGRAM_BOT_ENABLED:true}
     token: ${TELEGRAM_BOT_TOKEN:}
     chat-id: ${TELEGRAM_CHAT_ID:@smartpriceofertas}
+    chat-id-tech: ${TELEGRAM_CHAT_ID_TECH:}
 
 whatsapp:
   enabled: ${WHATSAPP_ENABLED:true}

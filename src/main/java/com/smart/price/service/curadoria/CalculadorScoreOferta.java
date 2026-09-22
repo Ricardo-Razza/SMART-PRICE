@@ -13,11 +13,14 @@ import com.smart.price.entity.OfertaDescoberta;
 @Component
 public class CalculadorScoreOferta {
 
+    private static final BigDecimal VALOR_PRODUTO_RELEVANTE = BigDecimal.valueOf(300.0);
+
     /**
      * Calcula a pontuação total da oferta com base nos fatores objetivos de atratividade:
      * - Percentual de desconto apurado: até 35 pontos
      * - Menor preço histórico registrado: 30 pontos
      * - Cupom ativo aplicável: 25 pontos
+     * - Bônus produto de alto giro / valor agregado (>= R$ 300): 15 pontos
      * - Frete grátis: 10 pontos
      */
     public int calcularScore(OfertaDescoberta oferta) {
@@ -37,6 +40,8 @@ public class CalculadorScoreOferta {
             score += 20;
         } else if (desc >= 10) {
             score += 10;
+        } else if (desc >= 5) {
+            score += 5;
         }
 
         // 2. Pontuação por menor preço histórico registrado (30 pts)
@@ -50,7 +55,13 @@ public class CalculadorScoreOferta {
             score += 25;
         }
 
-        // 4. Pontuação por frete grátis (10 pts)
+        // 4. Bônus para produtos de maior valor agregado / alto giro (15 pts)
+        // Evita que apenas miudezas/acessórios baratos com descontos inflados monopolizem o canal
+        if (oferta.getPreco() != null && oferta.getPreco().compareTo(VALOR_PRODUTO_RELEVANTE) >= 0) {
+            score += 15;
+        }
+
+        // 5. Pontuação por frete grátis (10 pts)
         if (Boolean.TRUE.equals(oferta.getFreteGratis())) {
             score += 10;
         }

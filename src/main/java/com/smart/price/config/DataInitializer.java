@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -22,6 +23,9 @@ import com.smart.price.repository.TermoBuscaRepository;
 public class DataInitializer implements CommandLineRunner {
 
     private static final Logger logger = LoggerFactory.getLogger(DataInitializer.class);
+
+    @Value("${telegram.bot.chat-id-tech:}")
+    private String telegramChatIdTech;
 
     private final NichoRepository nichoRepository;
     private final CupomRepository cupomRepository;
@@ -234,10 +238,39 @@ public class DataInitializer implements CommandLineRunner {
                 "chinelo slide nuvem ortopedico"
         ));
 
+        // 11. TECH & COMPUTADORES (Focado exclusivamente em informática, computadores e tecnologia de alto giro)
+        sincronizarNichoComTermos("TECH & COMPUTADORES", "MLB1648,MLB454379,MLB1712,MLB14370,MLB1051,MLB1055,MLB1000,MLB1144",
+                (telegramChatIdTech != null && !telegramChatIdTech.isBlank()) ? telegramChatIdTech.trim() : null,
+                List.of(
+                        "notebook gamer rtx",
+                        "notebook lenovo thinkpad dell",
+                        "macbook air m2 m3",
+                        "placa de video rtx 4060",
+                        "placa de video rtx 4070 ti",
+                        "processador ryzen 5 7600",
+                        "processador intel core i5 i7",
+                        "monitor gamer 144hz fast ips",
+                        "monitor ultrawide lg dell",
+                        "ssd nvme 1tb pcie 4.0",
+                        "ssd nvme 2tb kingston samsung",
+                        "memoria ram ddr5 32gb",
+                        "teclado mecanico gamer sem fio",
+                        "mouse gamer sem fio logitech g pro",
+                        "headset gamer sem fio 7.1",
+                        "smart tv 55 polegadas 4k 120hz",
+                        "iphone 15 pro max",
+                        "samsung galaxy s24 ultra",
+                        "playstation 5 slim midia fisica",
+                        "nintendo switch oled",
+                        "gabinete gamer aquario com fans",
+                        "fonte 750w 80 plus gold modular",
+                        "water cooler 360mm rgb"
+                ));
+
         // Remove cupons de exemplo/mock
         limparCuponsExemplo();
 
-        logger.info("DataInitializer: Nichos e mais de 180 termos de busca de alta procura configurados para mineração contínua.");
+        logger.info("DataInitializer: Nichos e mais de 200 termos de busca de alta procura configurados para mineração contínua.");
     }
 
     private void sincronizarNichoComTermos(String nomeNicho, String categoriaMlb, String telegramChatId, List<String> termosDesejados) {

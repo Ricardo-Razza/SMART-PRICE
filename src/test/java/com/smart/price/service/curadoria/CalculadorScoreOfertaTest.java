@@ -39,17 +39,33 @@ class CalculadorScoreOfertaTest {
     }
 
     @Test
-    @DisplayName("Oferta morna com apenas 5% de desconto e sem cupom nem menor preço deve ter score baixo")
+    @DisplayName("Oferta com 5% de desconto e sem cupom nem menor preço deve ter score baixo (5 pts)")
     void deveTerScoreBaixoParaOfertaMorna() {
         OfertaDescoberta oferta = new OfertaDescoberta();
         oferta.setPreco(new BigDecimal("95.00"));
         oferta.setPrecoOriginal(new BigDecimal("100.00"));
-        oferta.setDescontoPercentual(5); // 0 pts
+        oferta.setDescontoPercentual(5); // 5 pts
         oferta.setMenorPrecoHistorico(false); // 0 pts
         oferta.setFreteGratis(false); // 0 pts
 
         int score = calculador.calcularScore(oferta);
-        assertEquals(0, score);
+        assertEquals(5, score);
         assertFalse(calculador.isOfertaOuro(oferta, 60));
+    }
+
+    @Test
+    @DisplayName("Produto de alto giro (>= R$ 300) deve receber bônus de 15 pontos")
+    void deveAtribuirBonusParaProdutoDeAltoGiroEPrecoRelevante() {
+        OfertaDescoberta oferta = new OfertaDescoberta();
+        oferta.setPreco(new BigDecimal("1200.00"));
+        oferta.setPrecoOriginal(new BigDecimal("1350.00"));
+        oferta.setDescontoPercentual(10); // 10 pts
+        oferta.setMenorPrecoHistorico(false); // 0 pts
+        oferta.setFreteGratis(true); // 10 pts
+
+        // 10 (desconto) + 15 (bônus valor >= 300) + 10 (frete grátis) = 35 pts
+        int score = calculador.calcularScore(oferta);
+        assertEquals(35, score);
+        assertTrue(calculador.isOfertaOuro(oferta, 20));
     }
 }

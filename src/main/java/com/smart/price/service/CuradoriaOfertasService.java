@@ -104,48 +104,46 @@ public class CuradoriaOfertasService {
             }
         }
 
-        // 2. Mineração complementar por termos de busca cadastrados (apenas se os destaques em alta trouxerem menos de 6 itens)
-        if (candidatosBrutos.size() < 6) {
-            List<TermoBusca> termos = termoBuscaRepository.findProximosTermosParaBusca(
-                    nicho,
-                    PageRequest.of(0, termosPorCiclo)
-            );
-            if (termos.isEmpty()) {
-                termos = termoBuscaRepository.findByNichoAndAtivoTrue(nicho);
-            }
+        // 2. Mineração complementar por termos de busca cadastrados (sempre ativa para capturar produtos populares de alto giro)
+        List<TermoBusca> termos = termoBuscaRepository.findProximosTermosParaBusca(
+                nicho,
+                PageRequest.of(0, termosPorCiclo)
+        );
+        if (termos.isEmpty()) {
+            termos = termoBuscaRepository.findByNichoAndAtivoTrue(nicho);
+        }
 
-            if (!termos.isEmpty()) {
-                String termosNomes = termos.stream().map(TermoBusca::getTermo).collect(Collectors.joining(", "));
-                logger.info("CuradoriaOfertasService: Volume em alta baixo ({} itens). Pesquisando também {} termos rotativos para nicho '{}': [{}]...",
-                        candidatosBrutos.size(), termos.size(), nicho.getNome(), termosNomes);
+        if (!termos.isEmpty()) {
+            String termosNomes = termos.stream().map(TermoBusca::getTermo).collect(Collectors.joining(", "));
+            logger.info("CuradoriaOfertasService: Pesquisando {} termos rotativos para nicho '{}': [{}]...",
+                    termos.size(), nicho.getNome(), termosNomes);
 
-                for (TermoBusca termoBusca : termos) {
-                    try {
-                        if (delayMs > 0) {
-                            Thread.sleep(delayMs);
-                        }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        logger.warn("CuradoriaOfertasService: Intervalo de delay interrompido.");
-                        break;
+            for (TermoBusca termoBusca : termos) {
+                try {
+                    if (delayMs > 0) {
+                        Thread.sleep(delayMs);
                     }
-
-                    for (ProvedorLojaService provedor : provedoresAtivos) {
-                        try {
-                            List<OfertaDescoberta> ofertasDoTermo = provedor.buscarOfertasPorTermo(termoBusca.getTermo(), nicho);
-                            if (ofertasDoTermo != null && !ofertasDoTermo.isEmpty()) {
-                                candidatosBrutos.addAll(ofertasDoTermo);
-                            }
-                        } catch (Exception e) {
-                            logger.error("CuradoriaOfertasService: Erro ao buscar ofertas por termo [{}] no provedor [{}]: {}",
-                                    termoBusca.getTermo(), provedor.getLoja(), e.getMessage());
-                        }
-                    }
-
-                    termoBusca.setDataUltimaBusca(LocalDateTime.now());
-                    termoBusca.setTotalBuscas((termoBusca.getTotalBuscas() != null ? termoBusca.getTotalBuscas() : 0) + 1);
-                    termoBuscaRepository.save(termoBusca);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    logger.warn("CuradoriaOfertasService: Intervalo de delay interrompido.");
+                    break;
                 }
+
+                for (ProvedorLojaService provedor : provedoresAtivos) {
+                    try {
+                        List<OfertaDescoberta> ofertasDoTermo = provedor.buscarOfertasPorTermo(termoBusca.getTermo(), nicho);
+                        if (ofertasDoTermo != null && !ofertasDoTermo.isEmpty()) {
+                            candidatosBrutos.addAll(ofertasDoTermo);
+                        }
+                    } catch (Exception e) {
+                        logger.error("CuradoriaOfertasService: Erro ao buscar ofertas por termo [{}] no provedor [{}]: {}",
+                                termoBusca.getTermo(), provedor.getLoja(), e.getMessage());
+                    }
+                }
+
+                termoBusca.setDataUltimaBusca(LocalDateTime.now());
+                termoBusca.setTotalBuscas((termoBusca.getTotalBuscas() != null ? termoBusca.getTotalBuscas() : 0) + 1);
+                termoBuscaRepository.save(termoBusca);
             }
         }
 

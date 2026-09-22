@@ -167,7 +167,7 @@ public class MercadoLivrePesquisaPorNomeService {
                 int limiteItens = 0;
 
                 for (Map<String, Object> itemHl : content) {
-                    if (limiteItens >= 6) {
+                    if (limiteItens >= 10) {
                         break;
                     }
 
