@@ -260,4 +260,82 @@ class CuradoriaOfertasServiceTest {
         assertEquals(1, selecionadas.size(), "Deveria selecionar apenas o iPhone real e descartar a capinha!");
         assertEquals("Apple iPhone 13 (128 GB) - Meia-noite", selecionadas.get(0).getTitulo());
     }
+
+    @Test
+    @DisplayName("Deve barrar oferta já publicada nas últimas 24 horas caso não haja queda de preço expressiva")
+    void deveBarrarOfertaJaPublicadaNasUltimas24HorasSemQuedaDePreco() {
+        Nicho nicho = new Nicho("HARDWARE & INFORMÁTICA");
+        nicho.setId(1L);
+
+        TermoBusca termo = new TermoBusca(nicho, "Monitor Gamer");
+        termo.setId(30L);
+
+        when(termoBuscaRepository.findProximosTermosParaBusca(any(), any())).thenReturn(List.of(termo));
+        when(provedorLojaHub.getProvedoresAtivos()).thenReturn(List.of(provedorLojaService));
+
+        OfertaDescoberta monitor = new OfertaDescoberta();
+        monitor.setMlbId("MLB-MONITOR");
+        monitor.setTitulo("Monitor Gamer LG UltraGear 24 144Hz");
+        monitor.setPreco(new BigDecimal("800.00"));
+        monitor.setPrecoOriginal(new BigDecimal("1200.00"));
+        monitor.setDescontoPercentual(33);
+        monitor.setUrl("https://produto.mercadolivre.com.br/MLB-MONITOR");
+        monitor.setDisponivel(true);
+
+        when(provedorLojaService.buscarOfertasEmAlta(nicho)).thenReturn(List.of());
+        when(provedorLojaService.buscarOfertasPorTermo("Monitor Gamer", nicho)).thenReturn(List.of(monitor));
+
+        // Simula que o produto já foi publicado nas últimas 24h pelo mesmo preço
+        OfertaDescoberta publicadaAnteriormente = new OfertaDescoberta();
+        publicadaAnteriormente.setMlbId("MLB-MONITOR");
+        publicadaAnteriormente.setPreco(new BigDecimal("800.00"));
+        publicadaAnteriormente.setDataDescoberta(java.time.LocalDateTime.now().minusHours(2));
+
+        when(ofertaDescobertaRepository.findUltimaPublicacaoGlobal(any(), any(), any()))
+                .thenReturn(Optional.of(publicadaAnteriormente));
+
+        List<OfertaDescoberta> selecionadas = curadoriaOfertasService.curarMelhoresOfertasDoNicho(nicho);
+
+        assertTrue(selecionadas.isEmpty(), "Oferta deveria ser bloqueada pelo anti-duplicação global de 24 horas!");
+    }
+
+    @Test
+    @DisplayName("Deve permitir republicação de produto recente se houver queda de preço de pelo menos 5%")
+    void devePermitirRepublicacaoQuandoPrecoCaiMaisDe5Porcento() {
+        Nicho nicho = new Nicho("HARDWARE & INFORMÁTICA");
+        nicho.setId(1L);
+
+        TermoBusca termo = new TermoBusca(nicho, "Monitor Gamer");
+        termo.setId(30L);
+
+        when(termoBuscaRepository.findProximosTermosParaBusca(any(), any())).thenReturn(List.of(termo));
+        when(provedorLojaHub.getProvedoresAtivos()).thenReturn(List.of(provedorLojaService));
+
+        OfertaDescoberta monitorComPrecoMenor = new OfertaDescoberta();
+        monitorComPrecoMenor.setMlbId("MLB-MONITOR");
+        monitorComPrecoMenor.setTitulo("Monitor Gamer LG UltraGear 24 144Hz");
+        monitorComPrecoMenor.setPreco(new BigDecimal("720.00")); // Queda de 10% (de 800 para 720)
+        monitorComPrecoMenor.setPrecoOriginal(new BigDecimal("1200.00"));
+        monitorComPrecoMenor.setDescontoPercentual(40);
+        monitorComPrecoMenor.setUrl("https://produto.mercadolivre.com.br/MLB-MONITOR");
+        monitorComPrecoMenor.setDisponivel(true);
+
+        when(provedorLojaService.buscarOfertasEmAlta(nicho)).thenReturn(List.of());
+        when(provedorLojaService.buscarOfertasPorTermo("Monitor Gamer", nicho)).thenReturn(List.of(monitorComPrecoMenor));
+
+        OfertaDescoberta publicadaAnteriormente = new OfertaDescoberta();
+        publicadaAnteriormente.setMlbId("MLB-MONITOR");
+        publicadaAnteriormente.setPreco(new BigDecimal("800.00"));
+        publicadaAnteriormente.setDataDescoberta(java.time.LocalDateTime.now().minusHours(3));
+
+        when(ofertaDescobertaRepository.findUltimaPublicacaoGlobal(any(), any(), any()))
+                .thenReturn(Optional.of(publicadaAnteriormente));
+        when(cupomService.encontrarMelhorCupomParaOferta(any())).thenReturn(Optional.empty());
+        when(ofertaDescobertaRepository.saveAll(anyList())).thenAnswer(inv -> inv.getArgument(0));
+
+        List<OfertaDescoberta> selecionadas = curadoriaOfertasService.curarMelhoresOfertasDoNicho(nicho);
+
+        assertEquals(1, selecionadas.size(), "Deveria permitir republicação porque houve queda de preço >= 5%!");
+        assertTrue(selecionadas.get(0).getMenorPrecoHistorico());
+    }
 }

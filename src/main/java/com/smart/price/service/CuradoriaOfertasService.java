@@ -3,6 +3,7 @@ package com.smart.price.service;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -114,11 +115,13 @@ public class CuradoriaOfertasService {
         }
 
         if (!termos.isEmpty()) {
-            String termosNomes = termos.stream().map(TermoBusca::getTermo).collect(Collectors.joining(", "));
-            logger.info("CuradoriaOfertasService: Pesquisando {} termos rotativos para nicho '{}': [{}]...",
-                    termos.size(), nicho.getNome(), termosNomes);
+            List<TermoBusca> termosParaPesquisar = new ArrayList<>(termos);
+            Collections.shuffle(termosParaPesquisar);
+            String termosNomes = termosParaPesquisar.stream().map(TermoBusca::getTermo).collect(Collectors.joining(", "));
+            logger.info("CuradoriaOfertasService: Pesquisando {} termos rotativos (ordem dinâmica) para nicho '{}': [{}]...",
+                    termosParaPesquisar.size(), nicho.getNome(), termosNomes);
 
-            for (TermoBusca termoBusca : termos) {
+            for (TermoBusca termoBusca : termosParaPesquisar) {
                 try {
                     if (delayMs > 0) {
                         Thread.sleep(delayMs);
@@ -201,11 +204,9 @@ public class CuradoriaOfertasService {
             java.util.Optional<OfertaDescoberta> menorAnterior = (mlbId != null)
                     ? ofertaDescobertaRepository.findFirstByMlbIdOrderByPrecoAsc(mlbId)
                     : java.util.Optional.empty();
-            boolean precoCaiu = false;
             if (menorAnterior.isPresent()) {
                 if (oferta.getPreco().compareTo(menorAnterior.get().getPreco()) < 0) {
                     oferta.setMenorPrecoHistorico(true);
-                    precoCaiu = true;
                     logger.info("CuradoriaOfertasService: Menor preço histórico! [{}] caiu de R$ {} para R$ {}!",
                             mlbId, menorAnterior.get().getPreco(), oferta.getPreco());
                 }
@@ -215,25 +216,31 @@ public class CuradoriaOfertasService {
                 }
             }
 
-            // 4. Anti-duplicação por ciclo: Se o preço não caiu, impede republicação recente (3 ciclos do nicho)
-            if (!precoCaiu) {
-                java.util.Optional<OfertaDescoberta> ultimaOcorrencia = ofertaDescobertaRepository
-                        .findUltimaPublicacaoNoNicho(mlbId, oferta.getUrl(), nicho);
+            // 4. Anti-duplicação global de 24 horas: Impede republicação em QUALQUER nicho dentro da janela.
+            // Permite republicação apenas se houver queda expressiva de preço (>= 5% menor que o preço anterior)
+            String urlParaConsulta = !urlNormalizada.isBlank() ? urlNormalizada : oferta.getUrl();
+            java.util.Optional<OfertaDescoberta> ultimaPublicacao = ofertaDescobertaRepository
+                    .findUltimaPublicacaoGlobal(mlbId, urlParaConsulta, limiteAntiDuplicacao);
 
-                if (ultimaOcorrencia.isPresent()) {
-                    OfertaDescoberta anterior = ultimaOcorrencia.get();
-                    Integer cicloAnterior = anterior.getCicloNicho();
-
-                    if (cicloAnterior != null) {
-                        int ciclosPassados = cicloAtual - cicloAnterior;
-                        if (ciclosPassados < minCiclosAntiDuplicacao) {
-                            continue;
-                        }
-                    } else {
-                        if (anterior.getDataDescoberta() != null && anterior.getDataDescoberta().isAfter(limiteAntiDuplicacao)) {
-                            continue;
-                        }
+            if (ultimaPublicacao.isPresent()) {
+                OfertaDescoberta anterior = ultimaPublicacao.get();
+                BigDecimal precoAnterior = anterior.getPreco();
+                boolean quedaExpressiva = false;
+                if (precoAnterior != null && precoAnterior.compareTo(BigDecimal.ZERO) > 0 && oferta.getPreco() != null) {
+                    BigDecimal precoComCorte5Porcento = precoAnterior.multiply(BigDecimal.valueOf(0.95));
+                    if (oferta.getPreco().compareTo(precoComCorte5Porcento) <= 0) {
+                        quedaExpressiva = true;
                     }
+                }
+
+                if (!quedaExpressiva) {
+                    logger.info("CuradoriaOfertasService: Oferta [{}] descartada por anti-duplicação global de {}h (já publicada recentemente por R$ {}).",
+                            oferta.getTitulo(), horasAntiDuplicacao, precoAnterior);
+                    continue;
+                } else {
+                    oferta.setMenorPrecoHistorico(true);
+                    logger.info("CuradoriaOfertasService: Oferta [{}] aprovada para republicação por queda expressiva de preço (de R$ {} para R$ {}).",
+                            oferta.getTitulo(), precoAnterior, oferta.getPreco());
                 }
             }
 

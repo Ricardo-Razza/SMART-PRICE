@@ -45,7 +45,7 @@ monitoramento:
     fuso-horario: ${MODO_NOTURNO_FUSO:America/Sao_Paulo}
     pausar-envios: ${MODO_NOTURNO_PAUSAR:true}
   curadoria:
-    horas-anti-duplicacao: 12
+    horas-anti-duplicacao: ${CURADORIA_HORAS_ANTI_DUPLICACAO:24}
     min-ciclos-anti-duplicacao: 2
     termos-por-ciclo: 5
     max-ofertas-por-nicho: 3

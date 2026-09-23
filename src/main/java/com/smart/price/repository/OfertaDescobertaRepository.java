@@ -37,6 +37,16 @@ public interface OfertaDescobertaRepository extends JpaRepository<OfertaDescober
             @Param("url") String url,
             @Param("nicho") Nicho nicho);
 
+    /**
+     * Busca a última ocorrência do produto em QUALQUER nicho dentro da janela de tempo limite
+     * para garantir anti-duplicação global de 24 horas em todos os canais.
+     */
+    @Query("SELECT o FROM OfertaDescoberta o WHERE ((:mlbId IS NOT NULL AND o.mlbId = :mlbId) OR (:url IS NOT NULL AND (o.url = :url OR o.url LIKE CONCAT(:url, '%')))) AND o.dataDescoberta >= :limite ORDER BY o.dataDescoberta DESC LIMIT 1")
+    Optional<OfertaDescoberta> findUltimaPublicacaoGlobal(
+            @Param("mlbId") String mlbId,
+            @Param("url") String url,
+            @Param("limite") LocalDateTime limite);
+
     List<OfertaDescoberta> findByStatusEnvio(String statusEnvio);
 
     List<OfertaDescoberta> findTop20ByOrderByDataDescobertaDesc();

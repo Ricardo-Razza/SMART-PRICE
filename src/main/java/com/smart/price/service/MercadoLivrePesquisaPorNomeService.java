@@ -67,22 +67,33 @@ public class MercadoLivrePesquisaPorNomeService {
 
         try {
             String termoCodificado = URLEncoder.encode(termo.trim(), StandardCharsets.UTF_8);
-            // Ampliado para limit=15 garantindo alta densidade de ofertas reais com fotos e estoque
-            String urlCatalogo = String.format("%s/products/search?status=active&site_id=MLB&q=%s&limit=15",
-                    baseUrl, termoCodificado);
+            // Randomiza o offset entre as primeiras páginas (0, 15, 30) para explorar produtos variados a cada ciclo
+            int randomOffset = new java.util.Random().nextInt(3) * 15;
+            String urlCatalogo = String.format("%s/products/search?status=active&site_id=MLB&q=%s&limit=15&offset=%d",
+                    baseUrl, termoCodificado, randomOffset);
 
             HttpHeaders headers = new HttpHeaders();
             headers.setBearerAuth(token);
             headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
             HttpEntity<Void> entity = new HttpEntity<>(headers);
 
-            logger.info("MercadoLivrePesquisaPorNomeService: Buscando ofertas para nicho [{}] termo '{}'...",
-                    nicho != null ? nicho.getNome() : "GERAL", termo);
+            logger.info("MercadoLivrePesquisaPorNomeService: Buscando ofertas para nicho [{}] termo '{}' (offset {})...",
+                    nicho != null ? nicho.getNome() : "GERAL", termo, randomOffset);
 
             ResponseEntity<Map> response = restTemplate.exchange(URI.create(urlCatalogo), HttpMethod.GET, entity, Map.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 List<Map<String, Object>> produtos = (List<Map<String, Object>>) response.getBody().get("results");
+
+                // Fallback para offset=0 caso a página sorteada não retorne resultados (termo com poucos itens cadastrados)
+                if ((produtos == null || produtos.isEmpty()) && randomOffset > 0) {
+                    String urlFallback = String.format("%s/products/search?status=active&site_id=MLB&q=%s&limit=15",
+                            baseUrl, termoCodificado);
+                    ResponseEntity<Map> respFallback = restTemplate.exchange(URI.create(urlFallback), HttpMethod.GET, entity, Map.class);
+                    if (respFallback.getStatusCode().is2xxSuccessful() && respFallback.getBody() != null) {
+                        produtos = (List<Map<String, Object>>) respFallback.getBody().get("results");
+                    }
+                }
 
                 if (produtos != null) {
                     for (Map<String, Object> produto : produtos) {
@@ -140,7 +151,8 @@ public class MercadoLivrePesquisaPorNomeService {
         HttpEntity<Void> entity = new HttpEntity<>(headers);
 
         List<OfertaDescoberta> ofertas = new ArrayList<>();
-        String[] categorias = categoriaMlb.split(",");
+        List<String> categorias = new ArrayList<>(java.util.Arrays.asList(categoriaMlb.split(",")));
+        Collections.shuffle(categorias);
 
         for (String catIdRaw : categorias) {
             String catId = catIdRaw.trim();
@@ -163,10 +175,14 @@ public class MercadoLivrePesquisaPorNomeService {
                     continue;
                 }
 
+                // Embaralha a lista de itens em alta para alternar os produtos analisados a cada ciclo
+                List<Map<String, Object>> contentEmbaralhado = new ArrayList<>(content);
+                Collections.shuffle(contentEmbaralhado);
+
                 List<CompletableFuture<List<OfertaDescoberta>>> futures = new ArrayList<>();
                 int limiteItens = 0;
 
-                for (Map<String, Object> itemHl : content) {
+                for (Map<String, Object> itemHl : contentEmbaralhado) {
                     if (limiteItens >= 10) {
                         break;
                     }
