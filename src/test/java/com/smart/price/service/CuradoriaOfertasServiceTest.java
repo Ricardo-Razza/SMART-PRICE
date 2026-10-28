@@ -50,6 +50,9 @@ class CuradoriaOfertasServiceTest {
     @Mock
     private CupomService cupomService;
 
+    @Mock
+    private HistoricoPrecoService historicoPrecoService;
+
     private SubcategoriaExtrator subcategoriaExtrator;
     private CalculadorScoreOferta calculadorScoreOferta;
     private CuradoriaOfertasService curadoriaOfertasService;
@@ -66,7 +69,8 @@ class CuradoriaOfertasServiceTest {
                 copywriterIaService,
                 cupomService,
                 subcategoriaExtrator,
-                calculadorScoreOferta
+                calculadorScoreOferta,
+                historicoPrecoService
         );
 
         ReflectionTestUtils.setField(curadoriaOfertasService, "horasAntiDuplicacao", 24);

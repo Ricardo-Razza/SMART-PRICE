@@ -23,10 +23,10 @@ public class MercadoLivreProvedorService implements ProvedorLojaService {
     @Value("${mercadolivre.provedor.enabled:true}")
     private boolean habilitado;
 
-    @Value("${afiliado.mercadolivre.matt-tool:${ML_MATT_TOOL:32843307}}")
+    @Value("${afiliado.mercadolivre.matt-tool:${ML_MATT_TOOL:}}")
     private String mattTool;
 
-    @Value("${afiliado.mercadolivre.matt-word:${ML_MATT_WORD:smartpricetele}}")
+    @Value("${afiliado.mercadolivre.matt-word:${ML_MATT_WORD:}}")
     private String mattWord;
 
     @Value("${afiliado.mercadolivre.force-in-app:${ML_FORCE_IN_APP:true}}")

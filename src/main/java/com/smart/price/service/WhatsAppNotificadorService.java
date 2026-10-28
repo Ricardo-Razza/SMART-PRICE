@@ -42,10 +42,11 @@ public class WhatsAppNotificadorService implements NotificadorOfertasService {
     @Value("${whatsapp.enabled:false}")
     private boolean enabled;
 
-    @Value("${whatsapp.api-url:${WHATSAPP_API_URL:http://localhost:8081}}")
+    @Value("${whatsapp.api-url:${WHATSAPP_API_URL:http://evolution-api:8080}}")
     private String apiUrl;
 
-    @Value("${whatsapp.api-key:${WHATSAPP_API_KEY:smartprice_whatsapp_secret_key}}")
+    // Sem valor padrão: o app falha ao subir se WHATSAPP_API_KEY não estiver definido.
+    @Value("${whatsapp.api-key}")
     private String apiKey;
 
     @Value("${whatsapp.instance-name:${WHATSAPP_INSTANCE_NAME:smartprice}}")

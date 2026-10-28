@@ -343,6 +343,10 @@ public class MercadoLivrePesquisaPorNomeService {
                                 oferta.setDataDescoberta(LocalDateTime.now());
                                 oferta.setStatusEnvio("PENDENTE");
                                 oferta.setDisponivel(Boolean.TRUE);
+                                Object sellerId = item.get("seller_id");
+                                if (sellerId != null) {
+                                    oferta.setVendedorId(String.valueOf(sellerId instanceof Number n ? n.longValue() : sellerId));
+                                }
 
                                 lista.add(oferta);
                             });

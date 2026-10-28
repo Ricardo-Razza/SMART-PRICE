@@ -105,4 +105,7 @@ public class  OfertaDescoberta {
 
     @Column(name = "telegram_chat_id", length = 100)
     private String telegramChatId;
+
+    @Column(name = "vendedor_id", length = 50)
+    private String vendedorId;
 }

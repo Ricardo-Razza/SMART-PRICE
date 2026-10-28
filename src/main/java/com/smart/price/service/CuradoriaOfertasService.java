@@ -40,6 +40,7 @@ public class CuradoriaOfertasService {
     private final CupomService cupomService;
     private final SubcategoriaExtrator subcategoriaExtrator;
     private final CalculadorScoreOferta calculadorScoreOferta;
+    private final HistoricoPrecoService historicoPrecoService;
 
     @Value("${monitoramento.curadoria.horas-anti-duplicacao:24}")
     private int horasAntiDuplicacao;
@@ -66,7 +67,8 @@ public class CuradoriaOfertasService {
             CopywriterIaService copywriterIaService,
             CupomService cupomService,
             SubcategoriaExtrator subcategoriaExtrator,
-            CalculadorScoreOferta calculadorScoreOferta) {
+            CalculadorScoreOferta calculadorScoreOferta,
+            HistoricoPrecoService historicoPrecoService) {
         this.termoBuscaRepository = termoBuscaRepository;
         this.ofertaDescobertaRepository = ofertaDescobertaRepository;
         this.provedorLojaHub = provedorLojaHub;
@@ -74,6 +76,7 @@ public class CuradoriaOfertasService {
         this.cupomService = cupomService;
         this.subcategoriaExtrator = subcategoriaExtrator;
         this.calculadorScoreOferta = calculadorScoreOferta;
+        this.historicoPrecoService = historicoPrecoService;
     }
 
     /**
@@ -157,6 +160,14 @@ public class CuradoriaOfertasService {
 
         logger.info("CuradoriaOfertasService: Ciclo #{}: Analisando {} ofertas candidatas para o nicho '{}'...",
                 cicloAtual, candidatosBrutos.size(), nicho.getNome());
+
+        // Todo candidato visto entra no histórico de preço, publicado ou não
+        try {
+            historicoPrecoService.registrarColetas(candidatosBrutos);
+        } catch (Exception e) {
+            logger.error("CuradoriaOfertasService: Falha ao gravar histórico de preço do nicho '{}': {}",
+                    nicho.getNome(), e.getMessage());
+        }
 
         LocalDateTime limiteAntiDuplicacao = LocalDateTime.now().minusHours(horasAntiDuplicacao);
         List<OfertaDescoberta> candidatas = new ArrayList<>();

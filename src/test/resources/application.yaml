@@ -23,3 +23,10 @@ telegram:
 ia:
   gemini:
     enabled: false
+
+whatsapp:
+  enabled: false
+  api-key: chave-de-teste
+
+seguranca:
+  api-key: chave-de-teste
