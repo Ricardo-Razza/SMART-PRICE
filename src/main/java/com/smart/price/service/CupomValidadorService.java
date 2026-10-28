@@ -13,10 +13,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 import com.smart.price.entity.Cupom;
+import com.smart.price.enums.StatusCupom;
 
 /**
  * Serviço de validação automática de cupons via sonda HTTP.
@@ -25,10 +25,10 @@ import com.smart.price.entity.Cupom;
  * na página de ativação do Mercado Livre para verificar se o cupom
  * ainda está ativo antes de gravar no banco.
  *
- * Resultado:
- *  - Página OK e sem sinais de expiração  → testado = true  (entra no pareamento automático)
- *  - Página 404 / conteúdo de erro        → testado = false (quarentena; não é pareado com produtos)
- *  - Timeout / erro de rede               → testado = false (precaução; confirmar depois via endpoint)
+ * A sonda nunca confirma um cupom: só um teste no checkout (endpoint de confirmação) faz isso.
+ *  - Página 404 ou texto claro de cupom encerrado → INVALIDO (nunca é pareado)
+ *  - Página OK sem sinais de encerramento         → NAO_VERIFICADO
+ *  - Timeout, bloqueio, erro de rede ou HTTP != 2xx → NAO_VERIFICADO
  */
 @Service
 public class CupomValidadorService {
@@ -42,7 +42,9 @@ public class CupomValidadorService {
     private static final String URL_CUPOM_ML = "https://www.mercadolivre.com.br/cupons/%s";
 
     /**
-     * Palavras que indicam que o cupom está inativo ou expirado na página do ML.
+     * Frases que indicam que o cupom está inativo ou expirado na página do ML.
+     * Termos genéricos como "error", "404" e "not found" ficaram de fora: aparecem em scripts
+     * e no HTML de qualquer página e reprovavam cupons bons.
      */
     private static final List<String> SINAIS_INVALIDO = List.of(
             "cupom não encontrado",
@@ -53,10 +55,7 @@ public class CupomValidadorService {
             "prazo expirou",
             "oferta encerrada",
             "página não encontrada",
-            "this coupon is not valid",
-            "not found",
-            "404",
-            "error"
+            "this coupon is not valid"
     );
 
     @Value("${cupons.validador.enabled:true}")
@@ -72,16 +71,13 @@ public class CupomValidadorService {
     }
 
     /**
-     * Valida automaticamente um cupom via sonda HTTP na página do Mercado Livre.
-     *
-     * Retorna true se o cupom parece ativo; false se há sinais de expiração ou erro.
-     * Em caso de indisponibilidade temporária da validação, retorna true por padrão
-     * (benefício da dúvida — o Monitor de Status vai desativar se falhar no futuro).
+     * Sonda a página do cupom no Mercado Livre. Falha de rede ou bloqueio nunca reprova o cupom:
+     * vira NAO_VERIFICADO e o post só avisa que há cupom, sem prometer preço.
      */
-    public boolean validarCupomAutomaticamente(Cupom cupom) {
+    public StatusCupom validarCupomAutomaticamente(Cupom cupom) {
         if (!enabled) {
-            logger.debug("CupomValidadorService: Validação automática desabilitada. Aprovando cupom [{}] por padrão.", cupom.getCodigo());
-            return true;
+            logger.debug("CupomValidadorService: Validação automática desabilitada. Cupom [{}] fica não verificado.", cupom.getCodigo());
+            return StatusCupom.NAO_VERIFICADO;
         }
 
         String urlAlvo = resolverUrlAlvo(cupom);
@@ -101,48 +97,38 @@ public class CupomValidadorService {
             );
 
             if (response.getStatusCode() == HttpStatus.NOT_FOUND) {
-                logger.info("CupomValidadorService: Cupom [{}] retornou 404. Marcando como não testado (quarentena).", cupom.getCodigo());
-                return false;
+                logger.info("CupomValidadorService: Cupom [{}] retornou 404. Marcado como inválido.", cupom.getCodigo());
+                return StatusCupom.INVALIDO;
             }
 
             if (!response.getStatusCode().is2xxSuccessful()) {
-                logger.warn("CupomValidadorService: Cupom [{}] retornou HTTP {}. Aprovando por padrão.", cupom.getCodigo(), response.getStatusCode());
-                return true;
+                logger.warn("CupomValidadorService: Cupom [{}] retornou HTTP {}. Fica não verificado.", cupom.getCodigo(), response.getStatusCode());
+                return StatusCupom.NAO_VERIFICADO;
             }
 
             String corpo = response.getBody();
             if (corpo != null) {
                 String corpoLower = corpo.toLowerCase();
                 for (String sinal : SINAIS_INVALIDO) {
-                    if (corpoLower.contains(sinal.toLowerCase())) {
-                        logger.info("CupomValidadorService: Cupom [{}] reprovado — sinal de invalidade detectado: \"{}\".", cupom.getCodigo(), sinal);
-                        return false;
+                    if (corpoLower.contains(sinal)) {
+                        logger.info("CupomValidadorService: Cupom [{}] inválido — sinal de encerramento detectado: \"{}\".", cupom.getCodigo(), sinal);
+                        return StatusCupom.INVALIDO;
                     }
                 }
             }
 
-            logger.info("CupomValidadorService: Cupom [{}] aprovado automaticamente ✅", cupom.getCodigo());
-            return true;
+            logger.info("CupomValidadorService: Cupom [{}] sem sinais de encerramento. Fica não verificado até teste no checkout.", cupom.getCodigo());
+            return StatusCupom.NAO_VERIFICADO;
 
         } catch (HttpClientErrorException.NotFound e) {
-            logger.info("CupomValidadorService: Cupom [{}] retornou 404. Quarentena ativada.", cupom.getCodigo());
-            return false;
-
-        } catch (HttpClientErrorException e) {
-            logger.warn("CupomValidadorService: Erro HTTP {} ao validar cupom [{}]. Aprovando por padrão.",
-                    e.getStatusCode(), cupom.getCodigo());
-            return true;
-
-        } catch (ResourceAccessException e) {
-            // Timeout ou sem conectividade — não penaliza o cupom por falha de rede
-            logger.warn("CupomValidadorService: Timeout ao sondar cupom [{}] ({}). Aprovando por padrão para não bloquear cupons válidos.",
-                    cupom.getCodigo(), e.getMessage());
-            return true;
+            logger.info("CupomValidadorService: Cupom [{}] retornou 404. Marcado como inválido.", cupom.getCodigo());
+            return StatusCupom.INVALIDO;
 
         } catch (Exception e) {
-            logger.warn("CupomValidadorService: Falha inesperada ao validar cupom [{}]: {}. Aprovando por padrão.",
+            // Timeout, bloqueio (403/429), erro de rede ou falha inesperada: não dá para afirmar nada
+            logger.warn("CupomValidadorService: Não foi possível verificar o cupom [{}] ({}). Fica não verificado.",
                     cupom.getCodigo(), e.getMessage());
-            return true;
+            return StatusCupom.NAO_VERIFICADO;
         }
     }
 

@@ -54,4 +54,8 @@ public class HistoricoPreco {
 
     @Column(name = "data_coleta", nullable = false)
     private LocalDateTime dataColeta;
+
+    /** Score calculado para o candidato neste ciclo. Nulo quando foi descartado antes da avaliação. */
+    @Column(name = "score")
+    private Integer score;
 }

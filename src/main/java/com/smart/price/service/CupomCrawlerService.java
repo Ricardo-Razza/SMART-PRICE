@@ -26,6 +26,7 @@ import org.springframework.web.client.RestTemplate;
 
 import com.smart.price.entity.Cupom;
 import com.smart.price.entity.Nicho;
+import com.smart.price.enums.StatusCupom;
 import com.smart.price.repository.NichoRepository;
 
 @Service
@@ -346,13 +347,12 @@ public class CupomCrawlerService {
         cupom.setDataInicio(LocalDateTime.now());
         // TTL reduzido para 6h: cupons relâmpago do ML costumam esgotar em poucas horas
         cupom.setDataExpiracao(LocalDateTime.now().plusHours(6));
-        cupom.setAtivo(true);
-        // Sonda automática: valida o cupom no ML via HTTP antes de definir testado
-        boolean validado = cupomValidadorService.validarCupomAutomaticamente(cupom);
-        cupom.setTestado(validado);
+        // Sonda automática: cupom inválido é gravado já inativo, para não ser pareado nem anunciado
+        StatusCupom status = cupomValidadorService.validarCupomAutomaticamente(cupom);
+        cupom.setStatusValidacao(status);
+        cupom.setAtivo(status != StatusCupom.INVALIDO);
         cupom.setAnunciadoAvulso(false);
-        cupom.setObservacao("Registrado via crawler em " + LocalDateTime.now()
-                + (validado ? " [Status: Validado]" : " [Status: Pendente]"));
+        cupom.setObservacao("Registrado via crawler em " + LocalDateTime.now() + " [Status: " + status + "]");
 
         return cupom;
     }
@@ -477,13 +477,12 @@ public class CupomCrawlerService {
         cupom.setDataInicio(LocalDateTime.now());
         // TTL reduzido para 6h: cupons relâmpago do ML costumam esgotar em poucas horas
         cupom.setDataExpiracao(LocalDateTime.now().plusHours(6));
-        cupom.setAtivo(true);
-        // Sonda automática: valida o cupom no ML via HTTP antes de definir testado
-        boolean validado = cupomValidadorService.validarCupomAutomaticamente(cupom);
-        cupom.setTestado(validado);
+        // Sonda automática: cupom inválido é gravado já inativo, para não ser pareado nem anunciado
+        StatusCupom status = cupomValidadorService.validarCupomAutomaticamente(cupom);
+        cupom.setStatusValidacao(status);
+        cupom.setAtivo(status != StatusCupom.INVALIDO);
         cupom.setAnunciadoAvulso(false);
-        cupom.setObservacao("Registrado via crawler em " + LocalDateTime.now()
-                + (validado ? " [Status: Validado]" : " [Status: Pendente]"));
+        cupom.setObservacao("Registrado via crawler em " + LocalDateTime.now() + " [Status: " + status + "]");
 
         return Optional.of(cupom);
     }

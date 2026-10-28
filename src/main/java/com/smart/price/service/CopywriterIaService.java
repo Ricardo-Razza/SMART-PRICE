@@ -82,11 +82,15 @@ public class CopywriterIaService {
         }
         sb.append("\n");
 
-        // Cupom aplicável
+        // Cupom aplicável: preço com cupom só para cupom confirmado (precoComCupom preenchido)
         if (cupomCodigo != null && !cupomCodigo.isBlank()) {
-            String precoFinal = (precoComCupom != null) ? moeda.format(precoComCupom) : moeda.format(oferta.getPreco());
-            sb.append("🎟️ ").append(f.negrito("COM CUPOM:")).append(" Aplique ").append(f.codigo(cupomCodigo.trim()))
-                    .append(" no checkout ➡️ ").append(f.negrito(precoFinal + "!")).append("\n");
+            if (precoComCupom != null) {
+                sb.append("🎟️ ").append(f.negrito("COM CUPOM:")).append(" Aplique ").append(f.codigo(cupomCodigo.trim()))
+                        .append(" no checkout ➡️ ").append(f.negrito(moeda.format(precoComCupom) + "!")).append("\n");
+            } else {
+                sb.append("🎟️ ").append(f.negrito("TEM CUPOM:")).append(" ").append(f.codigo(cupomCodigo.trim()))
+                        .append(" ").append(f.texto("— confira o desconto no checkout")).append("\n");
+            }
         }
 
         // Frete grátis

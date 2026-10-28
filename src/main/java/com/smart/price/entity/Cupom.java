@@ -3,8 +3,15 @@ package com.smart.price.entity;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+import com.smart.price.enums.StatusCupom;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -63,14 +70,29 @@ public class Cupom {
     @Column(name = "anunciado_avulso")
     private Boolean anunciadoAvulso = false;
 
-    @Column(name = "testado", columnDefinition = "boolean default true")
-    private Boolean testado = true; // Se o cupom foi confirmado/testado como funcional
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(name = "status_validacao", length = 20, nullable = false)
+    private StatusCupom statusValidacao = StatusCupom.NAO_VERIFICADO;
 
     @Column(name = "observacao", length = 500)
     private String observacao;
 
     @Column(name = "data_criacao", nullable = false)
     private LocalDateTime dataCriacao = LocalDateTime.now();
+
+    /** Compatibilidade com a API: "testado" é o mesmo que CONFIRMADO. */
+    public Boolean getTestado() {
+        return statusValidacao == StatusCupom.CONFIRMADO;
+    }
+
+    public void setTestado(Boolean testado) {
+        this.statusValidacao = Boolean.TRUE.equals(testado) ? StatusCupom.CONFIRMADO : StatusCupom.NAO_VERIFICADO;
+    }
+
+    public boolean isConfirmado() {
+        return statusValidacao == StatusCupom.CONFIRMADO;
+    }
 
     /**
      * Verifica se o cupom está válido no momento atual.

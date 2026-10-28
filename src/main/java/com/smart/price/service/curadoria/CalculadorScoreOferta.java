@@ -2,27 +2,47 @@ package com.smart.price.service.curadoria;
 
 import java.math.BigDecimal;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import com.smart.price.entity.OfertaDescoberta;
+import com.smart.price.service.VendedorService;
 
 /**
- * Calcula a pontuação de relevância de uma oferta (0 a 100 pontos)
- * com base em desconto percentual, histórico de preço, cupom e frete.
+ * Calcula a pontuação de relevância de uma oferta (0 a 100 pontos). Pesos configuráveis em
+ * monitoramento.score.*:
+ * - Desconto real contra a mediana de 30 dias: até 35 (proporcional, cheio a partir de 50%)
+ * - Menor preço em 30 dias: 25
+ * - Cupom confirmado: 15
+ * - Loja oficial ou vendedor de reputação alta: 10
+ * - Frete grátis: 5
+ * - Desempenho da categoria: até 10 (entra na Fase 5, com dados de clique; hoje soma 0)
  */
 @Component
 public class CalculadorScoreOferta {
 
-    private static final BigDecimal VALOR_PRODUTO_RELEVANTE = BigDecimal.valueOf(300.0);
+    @Value("${monitoramento.score.peso-desconto:35}")
+    private int pesoDesconto = 35;
 
-    /**
-     * Calcula a pontuação total da oferta com base nos fatores objetivos de atratividade:
-     * - Percentual de desconto apurado: até 35 pontos
-     * - Menor preço histórico registrado: 30 pontos
-     * - Cupom ativo aplicável: 25 pontos
-     * - Bônus produto de alto giro / valor agregado (>= R$ 300): 15 pontos
-     * - Frete grátis: 10 pontos
-     */
+    /** Desconto, em %, que já vale a pontuação cheia de desconto. */
+    @Value("${monitoramento.score.desconto-teto:50}")
+    private int descontoTeto = 50;
+
+    @Value("${monitoramento.score.peso-menor-preco:25}")
+    private int pesoMenorPreco = 25;
+
+    @Value("${monitoramento.score.peso-cupom:15}")
+    private int pesoCupom = 15;
+
+    @Value("${monitoramento.score.peso-vendedor:10}")
+    private int pesoVendedor = 10;
+
+    @Value("${monitoramento.score.peso-frete:5}")
+    private int pesoFrete = 5;
+
+    @Value("${monitoramento.vendedor.nivel-alto:5_green}")
+    private String nivelVendedorAlto = "5_green";
+
     public int calcularScore(OfertaDescoberta oferta) {
         if (oferta == null) {
             return 0;
@@ -30,40 +50,32 @@ public class CalculadorScoreOferta {
 
         int score = 0;
 
-        // 1. Pontuação por desconto percentual real (máx 35 pts)
-        int desc = oferta.getDescontoPercentual() != null ? oferta.getDescontoPercentual() : 0;
-        if (desc >= 50) {
-            score += 35;
-        } else if (desc >= 35) {
-            score += 30;
-        } else if (desc >= 20) {
-            score += 20;
-        } else if (desc >= 10) {
-            score += 10;
-        } else if (desc >= 5) {
-            score += 5;
+        // 1. Desconto real: contra a mediana quando há histórico; senão, o "De" da loja que passou no filtro
+        int desc = descontoConsiderado(oferta);
+        if (desc > 0 && descontoTeto > 0) {
+            score += Math.round(pesoDesconto * (float) Math.min(desc, descontoTeto) / descontoTeto);
         }
 
-        // 2. Pontuação por menor preço histórico registrado (30 pts)
+        // 2. Menor preço em 30 dias (só marcado com histórico suficiente)
         if (Boolean.TRUE.equals(oferta.getMenorPrecoHistorico())) {
-            score += 30;
+            score += pesoMenorPreco;
         }
 
-        // 3. Pontuação por cupom de desconto aplicável ativo (25 pts)
+        // 3. Cupom confirmado: o desconto do cupom só é preenchido quando o cupom está CONFIRMADO
         if (oferta.getCupomAplicado() != null && !oferta.getCupomAplicado().isBlank()
                 && oferta.getDescontoCupom() != null && oferta.getDescontoCupom().compareTo(BigDecimal.ZERO) > 0) {
-            score += 25;
+            score += pesoCupom;
         }
 
-        // 4. Bônus para produtos de maior valor agregado / alto giro (15 pts)
-        // Evita que apenas miudezas/acessórios baratos com descontos inflados monopolizem o canal
-        if (oferta.getPreco() != null && oferta.getPreco().compareTo(VALOR_PRODUTO_RELEVANTE) >= 0) {
-            score += 15;
+        // 4. Loja oficial ou vendedor de reputação alta
+        if (Boolean.TRUE.equals(oferta.getLojaOficial())
+                || VendedorService.nivel(oferta.getVendedorNivel()) >= VendedorService.nivel(nivelVendedorAlto)) {
+            score += pesoVendedor;
         }
 
-        // 5. Pontuação por frete grátis (10 pts)
+        // 5. Frete grátis
         if (Boolean.TRUE.equals(oferta.getFreteGratis())) {
-            score += 10;
+            score += pesoFrete;
         }
 
         return Math.min(score, 100);
@@ -77,5 +89,12 @@ public class CalculadorScoreOferta {
             return false;
         }
         return calcularScore(oferta) >= scoreMinimo;
+    }
+
+    private int descontoConsiderado(OfertaDescoberta oferta) {
+        if (oferta.getDescontoReal() != null) {
+            return oferta.getDescontoReal();
+        }
+        return oferta.getDescontoPercentual() != null ? oferta.getDescontoPercentual() : 0;
     }
 }

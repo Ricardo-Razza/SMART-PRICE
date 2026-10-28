@@ -99,4 +99,15 @@ public class  OfertaDescoberta {
 
     @Column(name = "vendedor_id", length = 50)
     private String vendedorId;
+
+    @Column(name = "loja_oficial")
+    private Boolean lojaOficial = false;
+
+    /** level_id da reputação do vendedor no ML ("5_green"). Nulo quando não foi possível consultar. */
+    @Column(name = "vendedor_nivel", length = 20)
+    private String vendedorNivel;
+
+    /** Desconto contra a mediana de 30 dias do histórico. Nulo enquanto não há histórico suficiente. */
+    @Column(name = "desconto_real")
+    private Integer descontoReal;
 }

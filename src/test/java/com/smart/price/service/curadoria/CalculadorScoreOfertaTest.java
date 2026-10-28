@@ -22,50 +22,67 @@ class CalculadorScoreOfertaTest {
     }
 
     @Test
-    @DisplayName("Oferta com 40% OFF, menor preço histórico, cupom e frete grátis deve atingir score alto (Oferta Ouro)")
-    void deveAtingirScoreOuro() {
+    @DisplayName("Desconto real de 50%, menor preço em 30 dias, cupom confirmado, loja oficial e frete grátis somam 90")
+    void deveAtingirScoreMaximoSemCategoria() {
         OfertaDescoberta oferta = new OfertaDescoberta();
-        oferta.setPreco(new BigDecimal("120.00"));
-        oferta.setPrecoOriginal(new BigDecimal("200.00"));
-        oferta.setDescontoPercentual(40); // 30 pts
-        oferta.setMenorPrecoHistorico(true); // 30 pts
-        oferta.setCupomAplicado("DESC20"); // 25 pts
+        oferta.setPreco(new BigDecimal("100.00"));
+        oferta.setDescontoReal(50); // 35 pts
+        oferta.setMenorPrecoHistorico(true); // 25 pts
+        oferta.setCupomAplicado("DESC20"); // 15 pts
         oferta.setDescontoCupom(new BigDecimal("20.00"));
-        oferta.setFreteGratis(true); // 10 pts
+        oferta.setLojaOficial(true); // 10 pts
+        oferta.setFreteGratis(true); // 5 pts
 
-        int score = calculador.calcularScore(oferta);
-        assertEquals(95, score);
-        assertTrue(calculador.isOfertaOuro(oferta, 60));
+        assertEquals(90, calculador.calcularScore(oferta));
+        assertTrue(calculador.isOfertaOuro(oferta, 50));
     }
 
     @Test
-    @DisplayName("Oferta com 5% de desconto e sem cupom nem menor preço deve ter score baixo (5 pts)")
-    void deveTerScoreBaixoParaOfertaMorna() {
+    @DisplayName("Desconto real tem prioridade sobre o \"De\" da loja")
+    void deveUsarDescontoRealNoLugarDoPrecoDe() {
+        OfertaDescoberta oferta = new OfertaDescoberta();
+        oferta.setPreco(new BigDecimal("90.00"));
+        oferta.setDescontoPercentual(60); // "De" inflado da loja
+        oferta.setDescontoReal(10); // contra a mediana: 7 pts
+
+        assertEquals(7, calculador.calcularScore(oferta));
+    }
+
+    @Test
+    @DisplayName("Sem histórico, o desconto do \"De\" conta de forma proporcional")
+    void deveUsarDescontoDaLojaSemHistorico() {
         OfertaDescoberta oferta = new OfertaDescoberta();
         oferta.setPreco(new BigDecimal("95.00"));
-        oferta.setPrecoOriginal(new BigDecimal("100.00"));
-        oferta.setDescontoPercentual(5); // 5 pts
-        oferta.setMenorPrecoHistorico(false); // 0 pts
-        oferta.setFreteGratis(false); // 0 pts
+        oferta.setDescontoPercentual(5); // 35 * 5/50 = 3.5 → 4 pts
+        oferta.setMenorPrecoHistorico(false);
+        oferta.setFreteGratis(false);
 
-        int score = calculador.calcularScore(oferta);
-        assertEquals(5, score);
-        assertFalse(calculador.isOfertaOuro(oferta, 60));
+        assertEquals(4, calculador.calcularScore(oferta));
+        assertFalse(calculador.isOfertaOuro(oferta, 20));
     }
 
     @Test
-    @DisplayName("Produto de alto giro (>= R$ 300) deve receber bônus de 15 pontos")
-    void deveAtribuirBonusParaProdutoDeAltoGiroEPrecoRelevante() {
+    @DisplayName("Cupom não confirmado (sem desconto preenchido) não pontua")
+    void naoDevePontuarCupomNaoConfirmado() {
         OfertaDescoberta oferta = new OfertaDescoberta();
-        oferta.setPreco(new BigDecimal("1200.00"));
-        oferta.setPrecoOriginal(new BigDecimal("1350.00"));
-        oferta.setDescontoPercentual(10); // 10 pts
-        oferta.setMenorPrecoHistorico(false); // 0 pts
-        oferta.setFreteGratis(true); // 10 pts
+        oferta.setPreco(new BigDecimal("200.00"));
+        oferta.setCupomAplicado("TALVEZ10");
 
-        // 10 (desconto) + 15 (bônus valor >= 300) + 10 (frete grátis) = 35 pts
-        int score = calculador.calcularScore(oferta);
-        assertEquals(35, score);
-        assertTrue(calculador.isOfertaOuro(oferta, 20));
+        assertEquals(0, calculador.calcularScore(oferta));
+    }
+
+    @Test
+    @DisplayName("Vendedor 5_green pontua; 4_light_green não")
+    void devePontuarSoReputacaoAlta() {
+        OfertaDescoberta verde = new OfertaDescoberta();
+        verde.setPreco(new BigDecimal("200.00"));
+        verde.setVendedorNivel("5_green");
+
+        OfertaDescoberta verdeClaro = new OfertaDescoberta();
+        verdeClaro.setPreco(new BigDecimal("200.00"));
+        verdeClaro.setVendedorNivel("4_light_green");
+
+        assertEquals(10, calculador.calcularScore(verde));
+        assertEquals(0, calculador.calcularScore(verdeClaro));
     }
 }

@@ -21,6 +21,7 @@ import static org.mockito.Mockito.when;
 
 import com.smart.price.entity.Cupom;
 import com.smart.price.entity.Nicho;
+import com.smart.price.enums.StatusCupom;
 import com.smart.price.repository.NichoRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,8 +43,8 @@ class CupomCrawlerServiceTest {
 
     @BeforeEach
     void setUp() {
-        // Validador retorna true por padrão nos testes — não faz chamadas HTTP reais
-        lenient().when(cupomValidadorService.validarCupomAutomaticamente(any(Cupom.class))).thenReturn(true);
+        // Validador simulado: sonda sem sinais de encerramento, sem chamadas HTTP reais
+        lenient().when(cupomValidadorService.validarCupomAutomaticamente(any(Cupom.class))).thenReturn(StatusCupom.NAO_VERIFICADO);
         crawlerService = new CupomCrawlerService(restTemplate, cupomService, nichoRepository, cupomValidadorService);
     }
 
@@ -62,8 +63,8 @@ class CupomCrawlerServiceTest {
         assertEquals(new BigDecimal("20"), c.getValorDesconto());
         assertEquals(new BigDecimal("199"), c.getValorMinimoCompra());
         assertTrue(c.getAtivo());
-        // Com validador automático aprovando (mock retorna true), testado deve ser true
-        assertTrue(c.getTestado());
+        // A sonda não confirma cupom: fica NAO_VERIFICADO até o teste no checkout
+        assertEquals(StatusCupom.NAO_VERIFICADO, c.getStatusValidacao());
     }
 
     @Test

@@ -30,6 +30,7 @@ public class CupomResponseDTO {
     private Boolean ativo;
     private Boolean anunciadoAvulso;
     private Boolean testado;
+    private String statusValidacao;
     private String observacao;
     private LocalDateTime dataCriacao;
     private Boolean validoAgora;
@@ -51,6 +52,7 @@ public class CupomResponseDTO {
                 cupom.getAtivo(),
                 cupom.getAnunciadoAvulso(),
                 cupom.getTestado(),
+                cupom.getStatusValidacao() != null ? cupom.getStatusValidacao().name() : null,
                 cupom.getObservacao(),
                 cupom.getDataCriacao(),
                 cupom.isValidoAgora()

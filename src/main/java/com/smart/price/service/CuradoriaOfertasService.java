@@ -1,13 +1,17 @@
 package com.smart.price.service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -17,11 +21,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
+import com.smart.price.entity.Cupom;
 import com.smart.price.entity.Nicho;
 import com.smart.price.entity.OfertaDescoberta;
 import com.smart.price.entity.TermoBusca;
+import com.smart.price.enums.LojaEnum;
 import com.smart.price.repository.OfertaDescobertaRepository;
 import com.smart.price.repository.TermoBuscaRepository;
+import com.smart.price.service.HistoricoPrecoService.EstatisticaPreco;
 import com.smart.price.service.curadoria.CalculadorScoreOferta;
 import com.smart.price.service.curadoria.SubcategoriaExtrator;
 import com.smart.price.service.provedor.ProvedorLojaHub;
@@ -31,6 +38,9 @@ import com.smart.price.service.provedor.ProvedorLojaService;
 public class CuradoriaOfertasService {
 
     private static final Logger logger = LoggerFactory.getLogger(CuradoriaOfertasService.class);
+
+    /** Janela do selo "menor preço em 30 dias" e da mediana usada no desconto real. */
+    private static final int DIAS_HISTORICO = 30;
 
     private final TermoBuscaRepository termoBuscaRepository;
     private final OfertaDescobertaRepository ofertaDescobertaRepository;
@@ -53,8 +63,14 @@ public class CuradoriaOfertasService {
     @Value("${monitoramento.curadoria.max-ofertas-por-nicho:2}")
     private int maxOfertasPorNicho;
 
-    @Value("${monitoramento.curadoria.score-minimo:60}")
+    @Value("${monitoramento.curadoria.score-minimo:20}")
     private int scoreMinimo;
+
+    @Value("${monitoramento.curadoria.score-minimo-maduro:50}")
+    private int scoreMinimoMaduro;
+
+    @Value("${monitoramento.curadoria.dias-para-score-maduro:30}")
+    private int diasParaScoreMaduro;
 
     @Value("${monitoramento.curadoria.delay-ms:600}")
     private long delayMs;
@@ -161,20 +177,42 @@ public class CuradoriaOfertasService {
         logger.info("CuradoriaOfertasService: Ciclo #{}: Analisando {} ofertas candidatas para o nicho '{}'...",
                 cicloAtual, candidatosBrutos.size(), nicho.getNome());
 
-        // Todo candidato visto entra no histórico de preço, publicado ou não
-        try {
-            historicoPrecoService.registrarColetas(candidatosBrutos);
-        } catch (Exception e) {
-            logger.error("CuradoriaOfertasService: Falha ao gravar histórico de preço do nicho '{}': {}",
-                    nicho.getNome(), e.getMessage());
-        }
-
         LocalDateTime limiteAntiDuplicacao = LocalDateTime.now().minusHours(horasAntiDuplicacao);
+        int scoreMinimoVigente = scoreMinimoVigente();
         List<OfertaDescoberta> candidatas = new ArrayList<>();
+        Map<String, Integer> scorePorProduto = new HashMap<>();
         Set<String> idsColetadosNaRodada = new HashSet<>();
         Set<String> urlsColetadasNaRodada = new HashSet<>();
         Set<String> titulosColetadosNaRodada = new HashSet<>();
 
+        try {
+            avaliarCandidatos(candidatosBrutos, cicloAtual, limiteAntiDuplicacao, scoreMinimoVigente,
+                    candidatas, scorePorProduto, idsColetadosNaRodada, urlsColetadasNaRodada, titulosColetadosNaRodada);
+        } finally {
+            // Todo candidato visto entra no histórico de preço, publicado ou não, com o score que recebeu.
+            // Gravado depois da avaliação para que o selo e a mediana usem só coletas anteriores.
+            try {
+                historicoPrecoService.registrarColetas(candidatosBrutos, scorePorProduto);
+            } catch (Exception e) {
+                logger.error("CuradoriaOfertasService: Falha ao gravar histórico de preço do nicho '{}': {}",
+                        nicho.getNome(), e.getMessage());
+            }
+        }
+
+        if (candidatas.isEmpty()) {
+            logger.info("CuradoriaOfertasService: Nenhuma oferta atingiu o Score Mínimo (>= {}) para o nicho '{}' no Ciclo #{}. Canal preservado de spam.",
+                    scoreMinimoVigente, nicho.getNome(), cicloAtual);
+            return List.of();
+        }
+
+        return selecionarEPersistir(nicho, cicloAtual, candidatas);
+    }
+
+    private void avaliarCandidatos(List<OfertaDescoberta> candidatosBrutos, int cicloAtual,
+                                   LocalDateTime limiteAntiDuplicacao, int scoreMinimoVigente,
+                                   List<OfertaDescoberta> candidatas, Map<String, Integer> scorePorProduto,
+                                   Set<String> idsColetadosNaRodada, Set<String> urlsColetadasNaRodada,
+                                   Set<String> titulosColetadosNaRodada) {
         for (OfertaDescoberta oferta : candidatosBrutos) {
             if (oferta.getPreco() == null || oferta.getPreco().compareTo(BigDecimal.ZERO) <= 0) {
                 continue;
@@ -199,32 +237,32 @@ public class CuradoriaOfertasService {
             if (!tituloNormalizado.isBlank() && titulosColetadosNaRodada.contains(tituloNormalizado)) {
                 continue;
             }
+            if (mlbId != null) {
+                idsColetadosNaRodada.add(mlbId);
+            }
+            if (!urlNormalizada.isBlank()) {
+                urlsColetadasNaRodada.add(urlNormalizada);
+            }
+            if (!tituloNormalizado.isBlank()) {
+                titulosColetadosNaRodada.add(tituloNormalizado);
+            }
 
-            // 2. Filtro de corte de miudezas/acessórios e sanidade mínima de preço
+            // 2. Avaliação completa (histórico, cupom e score), feita para todo candidato
+            String termoOrigem = oferta.getTermoOrigem() != null ? oferta.getTermoOrigem() : "";
+            oferta.setSubcategoria(subcategoriaExtrator.extrairSubcategoria(oferta.getTitulo(), termoOrigem));
+            aplicarHistoricoDePreco(oferta);
+            aplicarCupom(oferta);
+
+            int score = calculadorScoreOferta.calcularScore(oferta);
+            oferta.setScoreQualidade(score);
+            if (mlbId != null) {
+                scorePorProduto.put(mlbId, score);
+            }
+
+            // 3. Filtro de corte de miudezas/acessórios e sanidade mínima de preço
             if (isMiudezaOuAcessorioIrrelevante(oferta)) {
                 logger.info("CuradoriaOfertasService: Oferta [{}] descartada por filtro de miudeza/acessório irrelevante.", oferta.getTitulo());
                 continue;
-            }
-
-            // 3. Extração semântica da subcategoria do produto
-            String termoOrigem = oferta.getTermoOrigem() != null ? oferta.getTermoOrigem() : "";
-            String subcategoria = subcategoriaExtrator.extrairSubcategoria(oferta.getTitulo(), termoOrigem);
-            oferta.setSubcategoria(subcategoria);
-
-            // 3. Checagem de Menor Preço Histórico e Baixa de Preço
-            java.util.Optional<OfertaDescoberta> menorAnterior = (mlbId != null)
-                    ? ofertaDescobertaRepository.findFirstByMlbIdOrderByPrecoAsc(mlbId)
-                    : java.util.Optional.empty();
-            if (menorAnterior.isPresent()) {
-                if (oferta.getPreco().compareTo(menorAnterior.get().getPreco()) < 0) {
-                    oferta.setMenorPrecoHistorico(true);
-                    logger.info("CuradoriaOfertasService: Menor preço histórico! [{}] caiu de R$ {} para R$ {}!",
-                            mlbId, menorAnterior.get().getPreco(), oferta.getPreco());
-                }
-            } else {
-                if (temDesconto(oferta)) {
-                    oferta.setMenorPrecoHistorico(true);
-                }
             }
 
             // 4. Anti-duplicação global de 24 horas: Impede republicação em QUALQUER nicho dentro da janela.
@@ -249,55 +287,104 @@ public class CuradoriaOfertasService {
                             oferta.getTitulo(), horasAntiDuplicacao, precoAnterior);
                     continue;
                 } else {
-                    oferta.setMenorPrecoHistorico(true);
                     logger.info("CuradoriaOfertasService: Oferta [{}] aprovada para republicação por queda expressiva de preço (de R$ {} para R$ {}).",
                             oferta.getTitulo(), precoAnterior, oferta.getPreco());
                 }
             }
 
-            if (mlbId != null) {
-                idsColetadosNaRodada.add(mlbId);
-            }
-            if (!urlNormalizada.isBlank()) {
-                urlsColetadasNaRodada.add(urlNormalizada);
-            }
-            if (!tituloNormalizado.isBlank()) {
-                titulosColetadosNaRodada.add(tituloNormalizado);
-            }
-
-            // 5. Pareamento com cupons de desconto ativos
-            java.util.Optional<com.smart.price.entity.Cupom> cupomOpt = cupomService.encontrarMelhorCupomParaOferta(oferta);
-            if (cupomOpt.isPresent()) {
-                com.smart.price.entity.Cupom cupom = cupomOpt.get();
-                BigDecimal descCupom = cupom.calcularDesconto(oferta.getPreco());
-                if (descCupom.compareTo(BigDecimal.ZERO) > 0) {
-                    oferta.setCupomAplicado(cupom.getCodigo());
-                    oferta.setDescontoCupom(descCupom);
-                    oferta.setPrecoComCupom(oferta.getPreco().subtract(descCupom));
-                }
-            }
-
-            // 6. Cálculo da pontuação de relevância
-            int score = calculadorScoreOferta.calcularScore(oferta);
-            oferta.setScoreQualidade(score);
-
-            // Filtro de corte: só avança se a oferta atingir o score mínimo
-            if (score < scoreMinimo) {
+            // 5. Filtro de corte: só avança se a oferta atingir o score mínimo
+            if (score < scoreMinimoVigente) {
                 logger.debug("CuradoriaOfertasService: Oferta [{}] descartada por Score insuficiente ({} < {})",
-                        oferta.getTitulo(), score, scoreMinimo);
+                        oferta.getTitulo(), score, scoreMinimoVigente);
                 continue;
             }
 
             oferta.setCicloNicho(cicloAtual);
             candidatas.add(oferta);
         }
+    }
 
-        if (candidatas.isEmpty()) {
-            logger.info("CuradoriaOfertasService: Nenhuma oferta atingiu o Score Mínimo (>= {}) para o nicho '{}' no Ciclo #{}. Canal preservado de spam.",
-                    scoreMinimo, nicho.getNome(), cicloAtual);
-            return List.of();
+    /**
+     * Selo "menor preço em 30 dias" e desconto real só com histórico suficiente (10 coletas em 7 dias).
+     * Com histórico, o "De" da loja acima do maior preço visto no período é ignorado.
+     */
+    private void aplicarHistoricoDePreco(OfertaDescoberta oferta) {
+        oferta.setMenorPrecoHistorico(false);
+        oferta.setDescontoReal(null);
+
+        Optional<EstatisticaPreco> estatistica;
+        try {
+            LojaEnum loja = oferta.getLoja() != null ? oferta.getLoja() : LojaEnum.MERCADO_LIVRE;
+            estatistica = historicoPrecoService.estatisticas(oferta.getMlbId(), loja, DIAS_HISTORICO);
+        } catch (Exception e) {
+            logger.debug("CuradoriaOfertasService: Falha ao ler histórico de [{}]: {}", oferta.getMlbId(), e.getMessage());
+            return;
+        }
+        if (estatistica.isEmpty() || !estatistica.get().isSuficiente()) {
+            return;
         }
 
+        EstatisticaPreco e = estatistica.get();
+        BigDecimal preco = oferta.getPreco();
+
+        if (preco.compareTo(e.minimo()) <= 0) {
+            oferta.setMenorPrecoHistorico(true);
+            logger.info("CuradoriaOfertasService: Menor preço em {} dias para [{}]: R$ {} (mínimo anterior R$ {}).",
+                    DIAS_HISTORICO, oferta.getMlbId(), preco, e.minimo());
+        }
+
+        if (e.mediana().compareTo(BigDecimal.ZERO) > 0) {
+            int descontoReal = e.mediana().subtract(preco).multiply(BigDecimal.valueOf(100))
+                    .divide(e.mediana(), 0, RoundingMode.HALF_UP).intValue();
+            oferta.setDescontoReal(Math.max(descontoReal, 0));
+        }
+
+        if (oferta.getPrecoOriginal() != null && oferta.getPrecoOriginal().compareTo(e.maximo()) > 0) {
+            logger.info("CuradoriaOfertasService: Preço \"De\" R$ {} de [{}] ignorado: acima do maior preço visto em {} dias (R$ {}).",
+                    oferta.getPrecoOriginal(), oferta.getMlbId(), DIAS_HISTORICO, e.maximo());
+            oferta.setPrecoOriginal(null);
+            oferta.setDescontoPercentual(0);
+        }
+    }
+
+    /**
+     * Pareia o melhor cupom. Só o cupom CONFIRMADO leva preço com cupom e pontos no score;
+     * o NAO_VERIFICADO aparece no post apenas como "tem cupom, confira no checkout".
+     */
+    private void aplicarCupom(OfertaDescoberta oferta) {
+        oferta.setCupomAplicado(null);
+        oferta.setDescontoCupom(null);
+        oferta.setPrecoComCupom(null);
+
+        Optional<Cupom> cupomOpt = cupomService.encontrarMelhorCupomParaOferta(oferta);
+        if (cupomOpt.isEmpty()) {
+            return;
+        }
+        Cupom cupom = cupomOpt.get();
+        oferta.setCupomAplicado(cupom.getCodigo());
+        if (cupom.isConfirmado()) {
+            BigDecimal descCupom = cupom.calcularDesconto(oferta.getPreco());
+            if (descCupom.compareTo(BigDecimal.ZERO) > 0) {
+                oferta.setDescontoCupom(descCupom);
+                oferta.setPrecoComCupom(oferta.getPreco().subtract(descCupom));
+            }
+        }
+    }
+
+    /** Score mínimo inicial enquanto o histórico tem menos de 30 dias; depois, o mínimo maduro. */
+    int scoreMinimoVigente() {
+        try {
+            Optional<LocalDateTime> inicio = historicoPrecoService.inicioDoHistorico();
+            if (inicio.isPresent() && inicio.get().isBefore(LocalDateTime.now().minusDays(diasParaScoreMaduro))) {
+                return scoreMinimoMaduro;
+            }
+        } catch (Exception e) {
+            logger.debug("CuradoriaOfertasService: Falha ao ler início do histórico: {}", e.getMessage());
+        }
+        return scoreMinimo;
+    }
+
+    private List<OfertaDescoberta> selecionarEPersistir(Nicho nicho, int cicloAtual, List<OfertaDescoberta> candidatas) {
         // Ordenação por relevância: Score de Qualidade primeiro, menor preço histórico, maior desconto, menor preço
         Comparator<OfertaDescoberta> comparadorRelevancia = Comparator
                 .comparing((OfertaDescoberta o) -> o.getScoreQualidade() != null ? -o.getScoreQualidade() : 0)
@@ -377,10 +464,6 @@ public class CuradoriaOfertasService {
                 salvas.size(), nicho.getNome(), cicloAtual);
 
         return salvas;
-    }
-
-    private boolean temDesconto(OfertaDescoberta o) {
-        return o.getPrecoOriginal() != null && o.getPrecoOriginal().compareTo(o.getPreco()) > 0;
     }
 
     private String normalizarUrl(String url) {

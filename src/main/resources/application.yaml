@@ -69,8 +69,23 @@ monitoramento:
     termos-por-ciclo: 5
     max-ofertas-por-nicho: 3
     minimo-desconto-percentual: 5
+    # Score mínimo nos primeiros 30 dias de histórico; depois disso passa a valer o "maduro"
     score-minimo: ${CURADORIA_SCORE_MINIMO:20}
+    score-minimo-maduro: ${CURADORIA_SCORE_MINIMO_MADURO:50}
+    dias-para-score-maduro: 30
     delay-ms: 400
+  # Pesos do score de oferta (0 a 100)
+  score:
+    peso-desconto: 35
+    desconto-teto: 50
+    peso-menor-preco: 25
+    peso-cupom: 15
+    peso-vendedor: 10
+    peso-frete: 5
+  vendedor:
+    # Vendedor abaixo deste nível de reputação no ML é descartado; loja oficial passa sempre
+    nivel-minimo: ${VENDEDOR_NIVEL_MINIMO:4_light_green}
+    nivel-alto: 5_green
 
 telegram:
   bot:

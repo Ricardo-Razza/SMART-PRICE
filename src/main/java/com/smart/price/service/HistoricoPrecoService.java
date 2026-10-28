@@ -42,6 +42,15 @@ public class HistoricoPrecoService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int registrarColetas(List<OfertaDescoberta> candidatos) {
+        return registrarColetas(candidatos, Map.of());
+    }
+
+    /**
+     * Igual a {@link #registrarColetas(List)}, gravando junto o score de cada produto avaliado
+     * (chave: produtoId). Produto sem score no mapa fica com score nulo.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public int registrarColetas(List<OfertaDescoberta> candidatos, Map<String, Integer> scorePorProduto) {
         if (candidatos == null || candidatos.isEmpty()) {
             return 0;
         }
@@ -69,6 +78,7 @@ public class HistoricoPrecoService {
             coleta.setPrecoOriginal(oferta.getPrecoOriginal());
             coleta.setVendedorId(oferta.getVendedorId());
             coleta.setDataColeta(agora);
+            coleta.setScore(scorePorProduto != null ? scorePorProduto.get(oferta.getMlbId()) : null);
             porProduto.put(chave, coleta);
         }
 
@@ -103,7 +113,21 @@ public class HistoricoPrecoService {
         return Optional.of(new EstatisticaPreco(precos.get(0), mediana, precos.get(n - 1), n, (int) diasDistintos));
     }
 
+    /** Data da coleta mais antiga do histórico, para saber há quanto tempo o sistema coleta preços. */
+    @Transactional(readOnly = true)
+    public Optional<LocalDateTime> inicioDoHistorico() {
+        return historicoPrecoRepository.findFirstByOrderByDataColetaAsc().map(HistoricoPreco::getDataColeta);
+    }
+
     public record EstatisticaPreco(BigDecimal minimo, BigDecimal mediana, BigDecimal maximo,
                                    int totalColetas, int diasDistintos) {
+
+        /** Mínimo para anunciar selo ou desconto real: 10 coletas em pelo menos 7 dias diferentes. */
+        public static final int MIN_COLETAS = 10;
+        public static final int MIN_DIAS_DISTINTOS = 7;
+
+        public boolean isSuficiente() {
+            return totalColetas >= MIN_COLETAS && diasDistintos >= MIN_DIAS_DISTINTOS;
+        }
     }
 }

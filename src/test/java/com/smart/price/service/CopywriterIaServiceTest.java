@@ -53,6 +53,21 @@ class CopywriterIaServiceTest {
     }
 
     @Test
+    @DisplayName("Cupom não confirmado: avisa que há cupom sem prometer preço final")
+    void deveAvisarCupomSemPrecoQuandoNaoConfirmado() {
+        OfertaDescoberta oferta = new OfertaDescoberta();
+        oferta.setTitulo("Monitor Gamer 27");
+        oferta.setPreco(BigDecimal.valueOf(999.90));
+        oferta.setUrl("https://produto.mercadolivre.com.br/MLB-2");
+
+        String mensagem = copywriterIaService.formatarMensagemCompleta(
+                oferta, null, "TALVEZ50", null, oferta.getUrl(), TelegramHtml.INSTANCIA);
+
+        assertThat(mensagem).contains("🎟️ <b>TEM CUPOM:</b> <code>TALVEZ50</code> — confira o desconto no checkout");
+        assertThat(mensagem).doesNotContain("COM CUPOM");
+    }
+
+    @Test
     @DisplayName("Telegram: título com < > & _ * [ não quebra a formatação")
     void deveEscaparCaracteresEspeciaisDoTituloNoHtml() {
         OfertaDescoberta oferta = new OfertaDescoberta();

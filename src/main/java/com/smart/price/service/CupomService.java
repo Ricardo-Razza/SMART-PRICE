@@ -18,6 +18,7 @@ import com.smart.price.entity.Envio;
 import com.smart.price.entity.Nicho;
 import com.smart.price.entity.OfertaDescoberta;
 import com.smart.price.enums.CanalEnvio;
+import com.smart.price.enums.StatusCupom;
 import com.smart.price.enums.StatusEnvio;
 import com.smart.price.repository.CupomRepository;
 import com.smart.price.repository.EnvioRepository;
@@ -151,8 +152,8 @@ public class CupomService {
         return elegiveis.stream()
                 // Camada 1: Validade temporal confirmada no momento do pareamento
                 .filter(Cupom::isValidoAgora)
-                // Camada 2: Cupom deve ter sido confirmado como funcional (não apenas capturado)
-                .filter(c -> !Boolean.FALSE.equals(c.getTestado()))
+                // Camada 2: cupom inválido nunca é pareado. NAO_VERIFICADO entra, mas o post não promete preço
+                .filter(c -> c.getStatusValidacao() != StatusCupom.INVALIDO)
                 // Camada 3: Validação de nicho rigorosa — cupom de nicho específico NÃO casa com produto de outro nicho
                 .filter(c -> isCupomCompativelComOferta(c, oferta))
                 // Camada 4: Desconto real calculado deve ser de no mínimo R$ 1,00 para justificar mencionar no anúncio
@@ -165,8 +166,9 @@ public class CupomService {
                     }
                     return true;
                 })
-                // Seleciona o que gera maior economia real em reais para o comprador
-                .max(Comparator.comparing(c -> c.calcularDesconto(oferta.getPreco())));
+                // Prefere cupom confirmado; entre iguais, o que gera maior economia real em reais
+                .max(Comparator.comparing(Cupom::isConfirmado)
+                        .thenComparing(c -> c.calcularDesconto(oferta.getPreco())));
     }
 
     @Transactional
@@ -183,11 +185,11 @@ public class CupomService {
     public boolean confirmarCupomTestado(Long id) {
         Cupom cupom = cupomRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Cupom não encontrado com id: " + id));
-        if (Boolean.TRUE.equals(cupom.getTestado())) {
+        if (cupom.isConfirmado()) {
             logger.debug("CupomService: Cupom [{}] já estava marcado como testado.", cupom.getCodigo());
             return false;
         }
-        cupom.setTestado(true);
+        cupom.setStatusValidacao(StatusCupom.CONFIRMADO);
         String obs = cupom.getObservacao() != null ? cupom.getObservacao() : "";
         cupom.setObservacao(obs + " | Confirmado como funcional em " + LocalDateTime.now());
         cupomRepository.save(cupom);
