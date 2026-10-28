@@ -7,9 +7,14 @@ x-logging: &logging
 
 services:
   app:
+    # Imagem publicada pelo GitHub Actions. Atualizar: docker compose pull app && docker compose up -d app
+    # Para voltar a uma versão exata, use APP_IMAGE=ghcr.io/ricardo-razza/smart-price:<sha do commit>
+    image: ${APP_IMAGE:-ghcr.io/ricardo-razza/smart-price:latest}
+    # Build local continua disponível (docker compose build app) para desenvolvimento
     build:
       context: .
       dockerfile: Dockerfile
+    pull_policy: missing
     container_name: smartprice-app
     restart: unless-stopped
     # A JVM usa 75% deste limite como heap; sem limite, usaria 75% da RAM da VPS inteira
