@@ -42,8 +42,9 @@ public class ApiKeyFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         // Swagger só existe fora do perfil prod; a UI precisa carregar sem header para pedir a chave.
+        // O health check (só UP/DOWN) fica na porta de gestão, que não é publicada.
         String path = request.getRequestURI().substring(request.getContextPath().length());
-        return path.startsWith("/swagger-ui") || path.startsWith("/v3/api-docs");
+        return path.startsWith("/swagger-ui") || path.startsWith("/v3/api-docs") || path.equals("/actuator/health");
     }
 
     @Override

@@ -12,10 +12,11 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executor;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -28,24 +29,84 @@ import org.springframework.web.client.RestTemplate;
 
 import com.smart.price.entity.Nicho;
 import com.smart.price.entity.OfertaDescoberta;
+import com.smart.price.entity.ProdutoSemVendedor;
+import com.smart.price.repository.ProdutoSemVendedorRepository;
+import com.smart.price.service.provedor.MercadoLivreRateLimiter;
 
 @Service
 public class MercadoLivrePesquisaPorNomeService {
 
     private static final Logger logger = LoggerFactory.getLogger(MercadoLivrePesquisaPorNomeService.class);
 
+    /** Produto sem vendedor ativo não é consultado de novo por este período. */
+    private static final int HORAS_SEM_VENDEDOR = 2;
+
     private final RestTemplate restTemplate;
     private final MercadoLivreAuthService authService;
-
-    // Cache em memória de produtos que retornaram 404 (sem vendedor ativo) para economizar requests
-    private final Map<String, LocalDateTime> cacheSemVencedores = new ConcurrentHashMap<>();
+    private final MercadoLivreRateLimiter rateLimiter;
+    private final ProdutoSemVendedorRepository produtoSemVendedorRepository;
+    private final Executor executor;
 
     @Value("${mercadolivre.api.base-url:https://api.mercadolibre.com}")
     private String baseUrl;
 
-    public MercadoLivrePesquisaPorNomeService(RestTemplate restTemplate, MercadoLivreAuthService authService) {
+    public MercadoLivrePesquisaPorNomeService(
+            RestTemplate restTemplate,
+            MercadoLivreAuthService authService,
+            MercadoLivreRateLimiter rateLimiter,
+            ProdutoSemVendedorRepository produtoSemVendedorRepository,
+            @Qualifier("mercadoLivreExecutor") Executor executor) {
         this.restTemplate = restTemplate;
         this.authService = authService;
+        this.rateLimiter = rateLimiter;
+        this.produtoSemVendedorRepository = produtoSemVendedorRepository;
+        this.executor = executor;
+    }
+
+    /**
+     * GET na API do Mercado Livre respeitando o rate limit. Durante a suspensão por 429 a chamada é pulada
+     * (retorna null) em vez de dormir dentro do pool. Erros diferentes de 429 continuam sendo lançados.
+     */
+    private ResponseEntity<Map> chamar(String url, HttpEntity<Void> entity) {
+        if (!rateLimiter.podeChamar()) {
+            logger.debug("MercadoLivre: chamada pulada durante suspensão por 429: {}", url);
+            return null;
+        }
+        try {
+            ResponseEntity<Map> response = restTemplate.exchange(URI.create(url), HttpMethod.GET, entity, Map.class);
+            rateLimiter.registrarSucesso();
+            return response;
+        } catch (HttpStatusCodeException ex) {
+            if (ex.getStatusCode().value() == 429) {
+                rateLimiter.registrar429(ex.getResponseHeaders());
+                return null;
+            }
+            throw ex;
+        }
+    }
+
+    private boolean isSemVendedorRecente(String produtoId) {
+        try {
+            return produtoSemVendedorRepository.existsByProdutoIdAndDataRegistroAfter(
+                    produtoId, LocalDateTime.now().minusHours(HORAS_SEM_VENDEDOR));
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    private void marcarSemVendedor(String produtoId) {
+        if (produtoId == null) {
+            return;
+        }
+        try {
+            produtoSemVendedorRepository.save(new ProdutoSemVendedor(produtoId, LocalDateTime.now()));
+        } catch (Exception ex) {
+            logger.debug("MercadoLivre: não foi possível registrar produto sem vendedor {}: {}", produtoId, ex.getMessage());
+        }
+    }
+
+    private static boolean ok(ResponseEntity<Map> response) {
+        return response != null && response.getStatusCode().is2xxSuccessful() && response.getBody() != null;
     }
 
     /**
@@ -80,17 +141,17 @@ public class MercadoLivrePesquisaPorNomeService {
             logger.info("MercadoLivrePesquisaPorNomeService: Buscando ofertas para nicho [{}] termo '{}' (offset {})...",
                     nicho != null ? nicho.getNome() : "GERAL", termo, randomOffset);
 
-            ResponseEntity<Map> response = restTemplate.exchange(URI.create(urlCatalogo), HttpMethod.GET, entity, Map.class);
+            ResponseEntity<Map> response = chamar(urlCatalogo, entity);
 
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+            if (ok(response)) {
                 List<Map<String, Object>> produtos = (List<Map<String, Object>>) response.getBody().get("results");
 
                 // Fallback para offset=0 caso a página sorteada não retorne resultados (termo com poucos itens cadastrados)
                 if ((produtos == null || produtos.isEmpty()) && randomOffset > 0) {
                     String urlFallback = String.format("%s/products/search?status=active&site_id=MLB&q=%s&limit=15",
                             baseUrl, termoCodificado);
-                    ResponseEntity<Map> respFallback = restTemplate.exchange(URI.create(urlFallback), HttpMethod.GET, entity, Map.class);
-                    if (respFallback.getStatusCode().is2xxSuccessful() && respFallback.getBody() != null) {
+                    ResponseEntity<Map> respFallback = chamar(urlFallback, entity);
+                    if (ok(respFallback)) {
                         produtos = (List<Map<String, Object>>) respFallback.getBody().get("results");
                     }
                 }
@@ -116,12 +177,8 @@ public class MercadoLivrePesquisaPorNomeService {
                 }
             }
         } catch (HttpStatusCodeException ex) {
-            if (ex.getStatusCode().value() == 429) {
-                tratarRateLimit();
-            } else {
-                logger.warn("MercadoLivrePesquisaPorNomeService: Erro HTTP [{}] na busca de catálogo: {}",
-                        ex.getStatusCode(), ex.getResponseBodyAsString());
-            }
+            logger.warn("MercadoLivrePesquisaPorNomeService: Erro HTTP [{}] na busca de catálogo: {}",
+                    ex.getStatusCode(), ex.getResponseBodyAsString());
         } catch (Exception ex) {
             logger.error("MercadoLivrePesquisaPorNomeService: Erro ao pesquisar ofertas para termo '{}': {}",
                     termo, ex.getMessage());
@@ -165,8 +222,8 @@ public class MercadoLivrePesquisaPorNomeService {
                 logger.info("MercadoLivrePesquisaPorNomeService: Minerando produtos em alta na categoria [{}] para nicho [{}]...",
                         catId, nicho != null ? nicho.getNome() : "GERAL");
 
-                ResponseEntity<Map> response = restTemplate.exchange(URI.create(urlHighlights), HttpMethod.GET, entity, Map.class);
-                if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                ResponseEntity<Map> response = chamar(urlHighlights, entity);
+                if (!ok(response)) {
                     continue;
                 }
 
@@ -197,19 +254,18 @@ public class MercadoLivrePesquisaPorNomeService {
                         continue;
                     }
 
-                    LocalDateTime horario404 = cacheSemVencedores.get(produtoId);
-                    if (horario404 != null && horario404.isAfter(LocalDateTime.now().minusHours(2))) {
+                    if (isSemVendedorRecente(produtoId)) {
                         continue;
                     }
 
                     limiteItens++;
 
-                    // Dispara a consulta dos dados e itens do produto de forma paralela e não bloqueante
+                    // Consulta os dados e itens do produto em paralelo, no pool próprio do Mercado Livre
                     futures.add(CompletableFuture.supplyAsync(() -> {
                         try {
                             String urlProduto = String.format("%s/products/%s", baseUrl, produtoId);
-                            ResponseEntity<Map> respProd = restTemplate.exchange(URI.create(urlProduto), HttpMethod.GET, entity, Map.class);
-                            if (respProd.getStatusCode().is2xxSuccessful() && respProd.getBody() != null) {
+                            ResponseEntity<Map> respProd = chamar(urlProduto, entity);
+                            if (ok(respProd)) {
                                 Map<String, Object> prodData = respProd.getBody();
                                 Object statusProd = prodData.get("status");
                                 if (statusProd instanceof String s && !"active".equalsIgnoreCase(s)) {
@@ -224,15 +280,13 @@ public class MercadoLivrePesquisaPorNomeService {
                             }
                         } catch (HttpStatusCodeException ex) {
                             if (ex.getStatusCode().value() == 404) {
-                                cacheSemVencedores.put(produtoId, LocalDateTime.now());
-                            } else if (ex.getStatusCode().value() == 429) {
-                                tratarRateLimit();
+                                marcarSemVendedor(produtoId);
                             }
                         } catch (Exception e) {
                             logger.debug("MercadoLivrePesquisaPorNomeService: Falha ao obter dados do produto {}: {}", produtoId, e.getMessage());
                         }
                         return Collections.<OfertaDescoberta>emptyList();
-                    }));
+                    }, executor));
                 }
 
                 // Aguarda a conclusão de todos os itens da categoria em paralelo
@@ -247,12 +301,8 @@ public class MercadoLivrePesquisaPorNomeService {
                     }
                 }
             } catch (HttpStatusCodeException ex) {
-                if (ex.getStatusCode().value() == 429) {
-                    tratarRateLimit();
-                } else {
-                    logger.warn("MercadoLivrePesquisaPorNomeService: Erro HTTP [{}] ao buscar destaques da categoria {}: {}",
-                            ex.getStatusCode(), catId, ex.getResponseBodyAsString());
-                }
+                logger.warn("MercadoLivrePesquisaPorNomeService: Erro HTTP [{}] ao buscar destaques da categoria {}: {}",
+                        ex.getStatusCode(), catId, ex.getResponseBodyAsString());
             } catch (Exception ex) {
                 logger.error("MercadoLivrePesquisaPorNomeService: Erro ao buscar destaques da categoria {}: {}",
                         catId, ex.getMessage());
@@ -265,11 +315,8 @@ public class MercadoLivrePesquisaPorNomeService {
     private List<OfertaDescoberta> extrairItensParaOfertaDescoberta(
             String produtoId, String nomeProduto, String termo, Nicho nicho, String fotoUrl, HttpHeaders headers) {
 
-        if (produtoId != null) {
-            LocalDateTime horario404 = cacheSemVencedores.get(produtoId);
-            if (horario404 != null && horario404.isAfter(LocalDateTime.now().minusHours(2))) {
-                return Collections.emptyList();
-            }
+        if (produtoId != null && isSemVendedorRecente(produtoId)) {
+            return Collections.emptyList();
         }
 
         List<OfertaDescoberta> lista = new ArrayList<>();
@@ -277,9 +324,9 @@ public class MercadoLivrePesquisaPorNomeService {
             String urlItems = String.format("%s/products/%s/items", baseUrl, produtoId);
             HttpEntity<Void> entity = new HttpEntity<>(headers);
 
-            ResponseEntity<Map> response = restTemplate.exchange(URI.create(urlItems), HttpMethod.GET, entity, Map.class);
+            ResponseEntity<Map> response = chamar(urlItems, entity);
 
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+            if (ok(response)) {
                 List<Map<String, Object>> results = (List<Map<String, Object>>) response.getBody().get("results");
 
                 if (results != null && !results.isEmpty()) {
@@ -341,7 +388,6 @@ public class MercadoLivrePesquisaPorNomeService {
                                 oferta.setNicho(nicho);
                                 oferta.setTermoOrigem(termo);
                                 oferta.setDataDescoberta(LocalDateTime.now());
-                                oferta.setStatusEnvio("PENDENTE");
                                 oferta.setDisponivel(Boolean.TRUE);
                                 Object sellerId = item.get("seller_id");
                                 if (sellerId != null) {
@@ -351,15 +397,13 @@ public class MercadoLivrePesquisaPorNomeService {
                                 lista.add(oferta);
                             });
                 }
-                if (lista.isEmpty() && produtoId != null) {
-                    cacheSemVencedores.put(produtoId, LocalDateTime.now());
+                if (lista.isEmpty()) {
+                    marcarSemVendedor(produtoId);
                 }
             }
         } catch (HttpStatusCodeException ex) {
             if (ex.getStatusCode().value() == 404) {
-                cacheSemVencedores.put(produtoId, LocalDateTime.now());
-            } else if (ex.getStatusCode().value() == 429) {
-                tratarRateLimit();
+                marcarSemVendedor(produtoId);
             }
         } catch (Exception ex) {
             logger.debug("MercadoLivrePesquisaPorNomeService: Falha ao extrair itens do produto {}: {}", produtoId, ex.getMessage());
@@ -454,14 +498,5 @@ public class MercadoLivrePesquisaPorNomeService {
             }
         }
         return null;
-    }
-
-    private void tratarRateLimit() {
-        logger.warn("MercadoLivre: Rate limit 429 atingido! Aguardando 10 segundos antes de continuar...");
-        try {
-            Thread.sleep(10000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 }

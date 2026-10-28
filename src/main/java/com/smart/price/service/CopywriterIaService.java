@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 
 import com.smart.price.entity.Cupom;
 import com.smart.price.entity.OfertaDescoberta;
+import com.smart.price.service.formatacao.FormatadorMensagem;
+import com.smart.price.service.formatacao.WhatsAppMarkdown;
 
 /**
  * Serviço responsável pela formatação padronizada das mensagens de ofertas e cupons para o Telegram.
@@ -31,69 +33,72 @@ public class CopywriterIaService {
     }
 
     /**
-     * Formata os dados de uma oferta descoberta em mensagem estruturada para o Telegram.
+     * Gera o texto de referência da oferta (guardado em copy_ia). Cada canal formata o seu na hora do envio.
      */
     public String gerarCopyOferta(OfertaDescoberta oferta, String cupomCodigo, BigDecimal precoComCupom) {
         if (oferta == null) {
             return "";
         }
-        return formatarMensagemCompleta(oferta, null, cupomCodigo, precoComCupom, oferta.getUrl());
+        return formatarMensagemCompleta(oferta, null, cupomCodigo, precoComCupom, oferta.getUrl(), WhatsAppMarkdown.INSTANCIA);
     }
 
     /**
      * Formata o anúncio avulso de um cupom de desconto.
      */
-    public String gerarCopyCupomAvulso(Cupom cupom, String linkFinal) {
+    public String gerarCopyCupomAvulso(Cupom cupom, String linkFinal, FormatadorMensagem f) {
         if (cupom == null) {
             return "";
         }
-        return formatarMensagemCupom(cupom, linkFinal);
+        return formatarMensagemCupom(cupom, linkFinal, f);
     }
 
     /**
-     * Monta o corpo da mensagem da oferta com detalhes de preço, desconto, cupom e link de afiliado.
+     * Monta o corpo da mensagem da oferta com detalhes de preço, desconto, cupom e link de afiliado
+     * na marcação do canal informado.
      */
-    public String formatarMensagemCompleta(OfertaDescoberta oferta, String gancho, String cupomCodigo, BigDecimal precoComCupom, String link) {
+    public String formatarMensagemCompleta(OfertaDescoberta oferta, String gancho, String cupomCodigo,
+                                           BigDecimal precoComCupom, String link, FormatadorMensagem f) {
         NumberFormat moeda = NumberFormat.getCurrencyInstance(LOCALE_BR);
         StringBuilder sb = new StringBuilder();
 
         if (gancho != null && !gancho.isBlank()) {
-            sb.append(gancho.trim()).append("\n\n");
+            sb.append(f.texto(gancho.trim())).append("\n\n");
         }
 
         // Título do Produto
-        sb.append("🔥 *").append(oferta.getTitulo().trim()).append("*\n\n");
+        sb.append("🔥 ").append(f.negrito(oferta.getTitulo().trim())).append("\n\n");
 
         // Preço original se houver desconto
         boolean temPrecoOriginal = oferta.getPrecoOriginal() != null && oferta.getPrecoOriginal().compareTo(oferta.getPreco()) > 0;
         if (temPrecoOriginal) {
-            sb.append("💵 De: ~").append(moeda.format(oferta.getPrecoOriginal())).append("~\n");
+            sb.append("💵 De: ").append(f.riscado(moeda.format(oferta.getPrecoOriginal()))).append("\n");
         }
 
         // Preço promocional e percentual de desconto
         int desc = (oferta.getDescontoPercentual() != null && oferta.getDescontoPercentual() > 0) ? oferta.getDescontoPercentual() : 0;
-        sb.append("💥 *Por apenas: ").append(moeda.format(oferta.getPreco())).append("*");
+        sb.append("💥 ").append(f.negrito("Por apenas: " + moeda.format(oferta.getPreco())));
         if (desc > 0) {
-            sb.append(" (📉 *").append(desc).append("% OFF*)");
+            sb.append(" (📉 ").append(f.negrito(desc + "% OFF")).append(")");
         }
         sb.append("\n");
 
         // Cupom aplicável
         if (cupomCodigo != null && !cupomCodigo.isBlank()) {
             String precoFinal = (precoComCupom != null) ? moeda.format(precoComCupom) : moeda.format(oferta.getPreco());
-            sb.append("🎟️ *COM CUPOM:* Aplique `").append(cupomCodigo.trim()).append("` no checkout ➡️ *").append(precoFinal).append("!*\n");
+            sb.append("🎟️ ").append(f.negrito("COM CUPOM:")).append(" Aplique ").append(f.codigo(cupomCodigo.trim()))
+                    .append(" no checkout ➡️ ").append(f.negrito(precoFinal + "!")).append("\n");
         }
 
         // Frete grátis
         if (Boolean.TRUE.equals(oferta.getFreteGratis())) {
-            sb.append("🚚 *Frete Grátis incluso!*\n");
+            sb.append("🚚 ").append(f.negrito("Frete Grátis incluso!")).append("\n");
         }
 
         // Link de compra formatado
         String linkFinal = (link != null && !link.isBlank()) ? link : (oferta.getUrl() != null ? oferta.getUrl() : "");
         if (!linkFinal.isBlank()) {
             String textoCurto = formatarTextoLinkCurto(linkFinal, oferta.getMlbId());
-            sb.append("\n🛒 *Compre aqui:*\n👉 [").append(textoCurto).append("](").append(linkFinal).append(")");
+            sb.append("\n🛒 ").append(f.negrito("Compre aqui:")).append("\n👉 ").append(f.link(textoCurto, linkFinal));
         }
 
         return sb.toString();
@@ -125,52 +130,36 @@ public class CopywriterIaService {
     }
 
     /**
-     * Formata anúncio avulso de cupom para o Telegram.
+     * Formata anúncio avulso de cupom na marcação do canal informado.
      */
-    public String formatarMensagemCupom(Cupom cupom, String linkFinal) {
+    public String formatarMensagemCupom(Cupom cupom, String linkFinal, FormatadorMensagem f) {
         NumberFormat moeda = NumberFormat.getCurrencyInstance(LOCALE_BR);
         StringBuilder sb = new StringBuilder();
 
-        sb.append("🎟️ *CUPOM DESTAQUE MERCADO LIVRE* 🎟️\n\n");
+        sb.append("🎟️ ").append(f.negrito("CUPOM DESTAQUE MERCADO LIVRE")).append(" 🎟️\n\n");
 
         String valorDesc = "PERCENTUAL".equalsIgnoreCase(cupom.getTipoDesconto())
                 ? cupom.getValorDesconto().intValue() + "% OFF"
                 : moeda.format(cupom.getValorDesconto()) + " OFF";
 
-        sb.append("🏷️ Código: `").append(cupom.getCodigo()).append("` _(toque para copiar)_\n");
-        sb.append("💥 *Desconto:* ").append(valorDesc).append("\n");
+        sb.append("🏷️ Código: ").append(f.codigo(cupom.getCodigo())).append(" ").append(f.italico("(toque para copiar)")).append("\n");
+        sb.append("💥 ").append(f.negrito("Desconto:")).append(" ").append(f.texto(valorDesc)).append("\n");
 
         if (cupom.getValorMinimoCompra() != null && cupom.getValorMinimoCompra().compareTo(BigDecimal.ZERO) > 0) {
-            sb.append("📦 *Válido para compras a partir de:* ").append(moeda.format(cupom.getValorMinimoCompra())).append("\n");
+            sb.append("📦 ").append(f.negrito("Válido para compras a partir de:")).append(" ")
+                    .append(f.texto(moeda.format(cupom.getValorMinimoCompra()))).append("\n");
         }
 
-        if (cupom.getNicho() != null) {
-            sb.append("🎯 *Categoria:* ").append(cupom.getNicho().getNome()).append("\n");
-        } else {
-            sb.append("🎯 *Categoria:* Válido em produtos selecionados\n");
-        }
+        String categoria = cupom.getNicho() != null ? cupom.getNicho().getNome() : "Válido em produtos selecionados";
+        sb.append("🎯 ").append(f.negrito("Categoria:")).append(" ").append(f.texto(categoria)).append("\n");
 
         if (cupom.getDescricao() != null && !cupom.getDescricao().isBlank()) {
-            sb.append("ℹ️ _").append(cupom.getDescricao().trim()).append("_\n");
+            sb.append("ℹ️ ").append(f.italico(cupom.getDescricao().trim())).append("\n");
         }
 
-        sb.append("\n⚠️ _Disponibilidade limitada por volume de ativações no checkout._\n\n");
-        sb.append("👉 [mercadolivre.com.br/cupons](").append(linkFinal).append(")");
+        sb.append("\n⚠️ ").append(f.italico("Disponibilidade limitada por volume de ativações no checkout.")).append("\n\n");
+        sb.append("👉 ").append(f.link("mercadolivre.com.br/cupons", linkFinal));
 
         return sb.toString();
-    }
-
-    /**
-     * Fallback mantido para compatibilidade com chamadas legadas.
-     */
-    public String gerarCopyFallback(OfertaDescoberta oferta, String cupomCodigo, BigDecimal precoComCupom) {
-        return formatarMensagemCompleta(oferta, null, cupomCodigo, precoComCupom, oferta.getUrl());
-    }
-
-    /**
-     * Fallback mantido para compatibilidade com chamadas legadas.
-     */
-    public String gerarCopyCupomAvulsoFallback(Cupom cupom, String linkFinal) {
-        return formatarMensagemCupom(cupom, linkFinal);
     }
 }

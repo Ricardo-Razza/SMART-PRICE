@@ -14,11 +14,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.smart.price.dto.request.CupomRequest;
 import com.smart.price.entity.Cupom;
+import com.smart.price.entity.Envio;
 import com.smart.price.entity.Nicho;
 import com.smart.price.entity.OfertaDescoberta;
+import com.smart.price.enums.CanalEnvio;
+import com.smart.price.enums.StatusEnvio;
 import com.smart.price.repository.CupomRepository;
+import com.smart.price.repository.EnvioRepository;
 import com.smart.price.repository.NichoRepository;
-import com.smart.price.repository.OfertaDescobertaRepository;
+import com.smart.price.service.formatacao.TelegramHtml;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -32,7 +36,8 @@ public class CupomService {
     private final NichoRepository nichoRepository;
     private final CopywriterIaService copywriterIaService;
     private final TelegramNotificadorService telegramNotificadorService;
-    private final OfertaDescobertaRepository ofertaDescobertaRepository;
+    private final EnvioRepository envioRepository;
+    private final EstadoSistemaService estadoSistemaService;
     private final ModoNoturnoService modoNoturnoService;
 
     @Value("${cupons.anuncio-avulso.enabled:true}")
@@ -47,31 +52,22 @@ public class CupomService {
     @Value("${cupons.anuncio-avulso.min-desconto-percentual:10.0}")
     private double minDescontoPercentual = 10.0;
 
-    private LocalDateTime ultimoEnvioAvulso = null;
-
     @Autowired
     public CupomService(
             CupomRepository cupomRepository,
             NichoRepository nichoRepository,
             CopywriterIaService copywriterIaService,
             TelegramNotificadorService telegramNotificadorService,
-            OfertaDescobertaRepository ofertaDescobertaRepository,
+            EnvioRepository envioRepository,
+            EstadoSistemaService estadoSistemaService,
             @Autowired(required = false) ModoNoturnoService modoNoturnoService) {
         this.cupomRepository = cupomRepository;
         this.nichoRepository = nichoRepository;
         this.copywriterIaService = copywriterIaService;
         this.telegramNotificadorService = telegramNotificadorService;
-        this.ofertaDescobertaRepository = ofertaDescobertaRepository;
+        this.envioRepository = envioRepository;
+        this.estadoSistemaService = estadoSistemaService;
         this.modoNoturnoService = modoNoturnoService;
-    }
-
-    public CupomService(
-            CupomRepository cupomRepository,
-            NichoRepository nichoRepository,
-            CopywriterIaService copywriterIaService,
-            TelegramNotificadorService telegramNotificadorService,
-            OfertaDescobertaRepository ofertaDescobertaRepository) {
-        this(cupomRepository, nichoRepository, copywriterIaService, telegramNotificadorService, ofertaDescobertaRepository, null);
     }
 
     @Transactional
@@ -215,15 +211,13 @@ public class CupomService {
             logger.info("CupomService: Cupom [{}] desativado. Motivo: {}. Disparando alerta no Telegram...", codigo, motivo);
             telegramNotificadorService.notificarCupomEsgotado(cupom);
 
-            // Edição dinâmica de postagens anteriores: busca ofertas enviadas com este cupom e atualiza no Telegram
+            // Edição dinâmica de postagens anteriores: busca os posts do Telegram que usaram este cupom
             try {
-                List<OfertaDescoberta> ofertasAfetadas = ofertaDescobertaRepository
-                        .findByCupomAplicadoIgnoreCaseAndStatusEnvio(codigo.trim(), "ENVIADO");
+                List<Envio> enviosAfetados = envioRepository.findEnviosDoCupom(
+                        codigo.trim(), CanalEnvio.TELEGRAM, StatusEnvio.ENVIADO);
 
-                for (OfertaDescoberta o : ofertasAfetadas) {
-                    if (Boolean.TRUE.equals(o.getDisponivel()) && o.getTelegramMessageId() != null) {
-                        telegramNotificadorService.editarMensagemOfertaEsgotada(o, "Cupom " + codigo.toUpperCase() + " Esgotado");
-                    }
+                for (Envio envio : enviosAfetados) {
+                    telegramNotificadorService.editarMensagemOfertaEsgotada(envio, "Cupom " + codigo.toUpperCase() + " Esgotado");
                 }
             } catch (Exception ex) {
                 logger.warn("CupomService: Erro ao editar mensagens anteriores das ofertas afetadas: {}", ex.getMessage());
@@ -347,7 +341,8 @@ public class CupomService {
             return;
         }
 
-        // Anti-Flood: Intervalo mínimo entre postagens de cupons avulsos no grupo/canal
+        // Anti-Flood: Intervalo mínimo entre postagens de cupons avulsos no grupo/canal (persistido no banco)
+        LocalDateTime ultimoEnvioAvulso = getUltimoEnvioAvulso();
         if (ultimoEnvioAvulso != null) {
             long minutosDesdeUltimo = java.time.Duration.between(ultimoEnvioAvulso, LocalDateTime.now()).toMinutes();
             if (minutosDesdeUltimo < intervaloMinutosEntreAvulsos) {
@@ -389,7 +384,6 @@ public class CupomService {
 
         boolean enviou = anunciarCupomAvulso(melhor);
         if (enviou) {
-            this.ultimoEnvioAvulso = LocalDateTime.now();
             logger.info("CupomService: Cupom avulso [{}] publicado com sucesso! Próximo envio permitido em {} minutos.",
                     melhor.getCodigo(), intervaloMinutosEntreAvulsos);
         }
@@ -417,13 +411,13 @@ public class CupomService {
                 : "https://www.mercadolivre.com.br/cupons";
 
         String linkFinal = telegramNotificadorService.aplicarTagAfiliado(linkBruto);
-        String copy = copywriterIaService.gerarCopyCupomAvulso(cupom, linkFinal);
+        String copy = copywriterIaService.gerarCopyCupomAvulso(cupom, linkFinal, TelegramHtml.INSTANCIA);
 
         boolean enviou = telegramNotificadorService.notificarCupomAvulso(cupom, copy, linkFinal);
         if (enviou) {
             cupom.setAnunciadoAvulso(true);
             cupomRepository.save(cupom);
-            this.ultimoEnvioAvulso = LocalDateTime.now();
+            setUltimoEnvioAvulso(LocalDateTime.now());
             logger.info("CupomService: Anúncio avulso do cupom [{}] publicado no Telegram com sucesso.", cupom.getCodigo());
         }
 
@@ -463,11 +457,11 @@ public class CupomService {
     }
 
     public LocalDateTime getUltimoEnvioAvulso() {
-        return ultimoEnvioAvulso;
+        return estadoSistemaService.lerDataHora(EstadoSistemaService.ULTIMO_ENVIO_CUPOM_AVULSO).orElse(null);
     }
 
     public void setUltimoEnvioAvulso(LocalDateTime ultimoEnvioAvulso) {
-        this.ultimoEnvioAvulso = ultimoEnvioAvulso;
+        estadoSistemaService.gravarDataHora(EstadoSistemaService.ULTIMO_ENVIO_CUPOM_AVULSO, ultimoEnvioAvulso);
     }
 
     private void atualizarDadosCupom(Cupom cupom, CupomRequest req) {

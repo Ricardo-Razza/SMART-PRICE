@@ -1,6 +1,7 @@
 package com.smart.price.service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -19,9 +20,12 @@ import static org.mockito.Mockito.when;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.smart.price.entity.Cupom;
+import com.smart.price.entity.Envio;
+import com.smart.price.enums.CanalEnvio;
+import com.smart.price.enums.StatusEnvio;
 import com.smart.price.repository.CupomRepository;
+import com.smart.price.repository.EnvioRepository;
 import com.smart.price.repository.NichoRepository;
-import com.smart.price.repository.OfertaDescobertaRepository;
 
 @ExtendWith(MockitoExtension.class)
 class CupomServiceTest {
@@ -39,7 +43,10 @@ class CupomServiceTest {
     private TelegramNotificadorService telegramNotificadorService;
 
     @Mock
-    private OfertaDescobertaRepository ofertaDescobertaRepository;
+    private EnvioRepository envioRepository;
+
+    @Mock
+    private EstadoSistemaService estadoSistemaService;
 
     @Mock
     private ModoNoturnoService modoNoturnoService;
@@ -53,9 +60,36 @@ class CupomServiceTest {
                 nichoRepository,
                 copywriterIaService,
                 telegramNotificadorService,
-                ofertaDescobertaRepository,
+                envioRepository,
+                estadoSistemaService,
                 modoNoturnoService
         );
+    }
+
+    @Test
+    void deveEditarPostsDoTelegramQueUsaramOCupomEsgotado() {
+        Cupom cupom = new Cupom();
+        cupom.setCodigo("MELI30");
+        cupom.setAtivo(true);
+        Envio envio = new Envio();
+
+        when(cupomRepository.findByCodigoIgnoreCase("MELI30")).thenReturn(Optional.of(cupom));
+        when(envioRepository.findEnviosDoCupom("MELI30", CanalEnvio.TELEGRAM, StatusEnvio.ENVIADO)).thenReturn(List.of(envio));
+
+        cupomService.desativarCupomEAlertar("MELI30", "esgotado");
+
+        verify(telegramNotificadorService).editarMensagemOfertaEsgotada(eq(envio), any());
+    }
+
+    @Test
+    void deveRespeitarIntervaloPersistidoEntreCuponsAvulsos() {
+        when(modoNoturnoService.devePausarEnvios()).thenReturn(false);
+        when(estadoSistemaService.lerDataHora(EstadoSistemaService.ULTIMO_ENVIO_CUPOM_AVULSO))
+                .thenReturn(Optional.of(LocalDateTime.now().minusMinutes(5)));
+
+        cupomService.processarFilaAnuncioAvulso();
+
+        verify(cupomRepository, never()).findByAtivoTrueAndAnunciadoAvulsoFalse();
     }
 
     @Test
@@ -180,7 +214,8 @@ class CupomServiceTest {
         when(modoNoturnoService.devePausarEnvios()).thenReturn(false);
         when(cupomRepository.findByAtivoTrueAndAnunciadoAvulsoFalse()).thenReturn(List.of(fraco, ouro1, ouro2));
         when(telegramNotificadorService.aplicarTagAfiliado(any())).thenReturn("https://mercadolivre.com.br/cupons?tag=1");
-        when(copywriterIaService.gerarCopyCupomAvulso(any(), any())).thenReturn("🎟️ CUPOM DESTAQUE");
+        when(estadoSistemaService.lerDataHora(any())).thenReturn(Optional.empty());
+        when(copywriterIaService.gerarCopyCupomAvulso(any(), any(), any())).thenReturn("🎟️ CUPOM DESTAQUE");
         when(telegramNotificadorService.notificarCupomAvulso(any(), any(), any())).thenReturn(true);
         when(cupomRepository.save(any(Cupom.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -193,8 +228,9 @@ class CupomServiceTest {
         // Ouro 1 continua não anunciado para o próximo ciclo
         assertFalse(ouro1.getAnunciadoAvulso());
 
-        // Apenas 1 cupom avulso foi enviado ao Telegram
+        // Apenas 1 cupom avulso foi enviado ao Telegram, e o horário ficou gravado no banco
         verify(telegramNotificadorService).notificarCupomAvulso(eq(ouro2), any(), any());
+        verify(estadoSistemaService).gravarDataHora(eq(EstadoSistemaService.ULTIMO_ENVIO_CUPOM_AVULSO), any());
     }
 
     @Test

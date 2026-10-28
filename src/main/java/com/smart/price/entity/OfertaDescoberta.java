@@ -72,11 +72,8 @@ public class  OfertaDescoberta {
     @Column(name = "ciclo_nicho")
     private Integer cicloNicho;
 
-    @Column(name = "data_envio_whatsapp")
-    private LocalDateTime dataEnvioWhatsApp;
-
-    @Column(name = "status_envio", length = 20, nullable = false)
-    private String statusEnvio; // PENDENTE, ENVIADO, IGNORADO
+    // Status, data e message_id de envio ficam na tabela envio (um registro por canal).
+    // As colunas antigas continuam no banco só para consulta histórica.
 
     @Column(name = "disponivel")
     private Boolean disponivel = true;
@@ -99,12 +96,6 @@ public class  OfertaDescoberta {
 
     @Column(name = "score_qualidade")
     private Integer scoreQualidade = 0;
-
-    @Column(name = "telegram_message_id")
-    private Long telegramMessageId;
-
-    @Column(name = "telegram_chat_id", length = 100)
-    private String telegramChatId;
 
     @Column(name = "vendedor_id", length = 50)
     private String vendedorId;

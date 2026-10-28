@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -20,6 +21,8 @@ public interface CupomRepository extends JpaRepository<Cupom, Long> {
 
     List<Cupom> findByAtivoTrue();
 
+    // Carrega o nicho junto: o anúncio avulso roda fora de transação e lê o nome e o chat do nicho
+    @EntityGraph(attributePaths = "nicho")
     List<Cupom> findByAtivoTrueAndAnunciadoAvulsoFalse();
 
     /**

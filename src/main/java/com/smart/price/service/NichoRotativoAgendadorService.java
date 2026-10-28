@@ -8,7 +8,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import com.smart.price.entity.Nicho;
 import com.smart.price.entity.OfertaDescoberta;
@@ -49,8 +48,10 @@ public class NichoRotativoAgendadorService {
      * Pode ser invocado tanto pelo agendador quanto manualmente via endpoint de teste.
      *
      * @return Lista de ofertas selecionadas e notificadas.
+     *
+     * Sem transação envolvendo o ciclo: busca, pontuação, texto e envio (HTTP e pausas) rodam fora dela,
+     * e cada gravação no banco abre e fecha a sua própria transação curta.
      */
-    @Transactional
     public List<OfertaDescoberta> executarProximoCiclo() {
         if (modoNoturnoService != null && modoNoturnoService.devePausarEnvios()) {
             logger.info("NichoRotativoAgendador: Modo Noturno ativo ({} às {}, fuso {}). Envios pausados para respeitar o descanso dos membros.",

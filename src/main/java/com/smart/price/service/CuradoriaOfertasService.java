@@ -16,7 +16,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import com.smart.price.entity.Nicho;
 import com.smart.price.entity.OfertaDescoberta;
@@ -82,8 +81,9 @@ public class CuradoriaOfertasService {
     /**
      * Realiza a curadoria de ofertas do nicho aplicando regras de negócio:
      * controle de repetição por ciclo, diversificação por subcategoria e pontuação mínima de relevância.
+     * Roda fora de transação: as chamadas HTTP não seguram conexão do banco, e o saveAll final
+     * grava as selecionadas numa transação curta própria.
      */
-    @Transactional
     public List<OfertaDescoberta> curarMelhoresOfertasDoNicho(Nicho nicho) {
         if (nicho == null) {
             return List.of();

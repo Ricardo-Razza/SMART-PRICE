@@ -30,8 +30,6 @@ public class OfertaDescobertaDTO {
     private String termoOrigem;
     private LocalDateTime dataDescoberta;
     private Integer cicloNicho;
-    private LocalDateTime dataEnvioWhatsApp;
-    private String statusEnvio;
     private Boolean disponivel;
     private String cupomAplicado;
     private BigDecimal precoComCupom;
@@ -55,8 +53,6 @@ public class OfertaDescobertaDTO {
                 entity.getTermoOrigem(),
                 entity.getDataDescoberta(),
                 entity.getCicloNicho(),
-                entity.getDataEnvioWhatsApp(),
-                entity.getStatusEnvio(),
                 entity.getDisponivel(),
                 entity.getCupomAplicado(),
                 entity.getPrecoComCupom(),

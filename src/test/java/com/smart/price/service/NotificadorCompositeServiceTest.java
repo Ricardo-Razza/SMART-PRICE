@@ -29,7 +29,7 @@ class NotificadorCompositeServiceTest {
 
     @BeforeEach
     void setUp() {
-        compositeService = new NotificadorCompositeService(telegramService, whatsAppService);
+        compositeService = new NotificadorCompositeService(telegramService, whatsAppService, Runnable::run);
     }
 
     @Test

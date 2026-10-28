@@ -2,9 +2,11 @@ package com.smart.price.service;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
 
@@ -13,7 +15,8 @@ import com.smart.price.entity.OfertaDescoberta;
 
 /**
  * Hub despachador de notificações que distribui as ofertas selecionadas
- * simultaneamente em paralelo para todos os canais habilitados (Telegram, WhatsApp, etc.).
+ * em paralelo para todos os canais habilitados (Telegram, WhatsApp, etc.).
+ * Cada canal grava só a sua linha na tabela envio, então o paralelismo não disputa a mesma entidade.
  */
 @Service
 @Primary
@@ -23,12 +26,15 @@ public class NotificadorCompositeService implements NotificadorOfertasService {
 
     private final TelegramNotificadorService telegramService;
     private final WhatsAppNotificadorService whatsAppService;
+    private final Executor executor;
 
     public NotificadorCompositeService(
             TelegramNotificadorService telegramService,
-            WhatsAppNotificadorService whatsAppService) {
+            WhatsAppNotificadorService whatsAppService,
+            @Qualifier("notificacaoExecutor") Executor executor) {
         this.telegramService = telegramService;
         this.whatsAppService = whatsAppService;
+        this.executor = executor;
     }
 
     @Override
@@ -37,14 +43,13 @@ public class NotificadorCompositeService implements NotificadorOfertasService {
             return;
         }
 
-        // Despacha paralelamente para Telegram e WhatsApp, reduzindo a latência total pela metade
         CompletableFuture<Void> telegramFuture = CompletableFuture.runAsync(() -> {
             try {
                 telegramService.notificar(nicho, ofertas);
             } catch (Exception ex) {
                 logger.error("NotificadorComposite: Falha ao notificar canal Telegram: {}", ex.getMessage());
             }
-        });
+        }, executor);
 
         CompletableFuture<Void> whatsAppFuture = CompletableFuture.runAsync(() -> {
             try {
@@ -52,7 +57,7 @@ public class NotificadorCompositeService implements NotificadorOfertasService {
             } catch (Exception ex) {
                 logger.error("NotificadorComposite: Falha ao notificar grupo WhatsApp: {}", ex.getMessage());
             }
-        });
+        }, executor);
 
         CompletableFuture.allOf(telegramFuture, whatsAppFuture).join();
     }

@@ -1,6 +1,7 @@
 package com.smart.price.service;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -12,21 +13,32 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
+import com.smart.price.entity.Cupom;
+import com.smart.price.entity.Envio;
 import com.smart.price.entity.Nicho;
 import com.smart.price.entity.OfertaDescoberta;
+import com.smart.price.enums.CanalEnvio;
+import com.smart.price.repository.OfertaDescobertaRepository;
+import com.smart.price.service.formatacao.TelegramHtml;
+import com.smart.price.service.provedor.ProvedorLojaHub;
 
 @Service
 public class TelegramNotificadorService implements NotificadorOfertasService {
 
     private static final Logger logger = LoggerFactory.getLogger(TelegramNotificadorService.class);
 
+    /** Limite de legenda do sendPhoto; acima disso a oferta sai como mensagem de texto (limite 4096). */
+    private static final int LIMITE_LEGENDA = 1024;
+
     private final RestTemplate restTemplate;
-    private final com.smart.price.repository.OfertaDescobertaRepository ofertaDescobertaRepository;
-    private final com.smart.price.service.provedor.ProvedorLojaHub provedorLojaHub;
+    private final OfertaDescobertaRepository ofertaDescobertaRepository;
+    private final ProvedorLojaHub provedorLojaHub;
     private final CopywriterIaService copywriterIaService;
     private final ModoNoturnoService modoNoturnoService;
+    private final EnvioService envioService;
 
     @Value("${telegram.bot.enabled:false}")
     private boolean enabled;
@@ -42,15 +54,17 @@ public class TelegramNotificadorService implements NotificadorOfertasService {
 
     public TelegramNotificadorService(
             RestTemplate restTemplate,
-            com.smart.price.repository.OfertaDescobertaRepository ofertaDescobertaRepository,
-            com.smart.price.service.provedor.ProvedorLojaHub provedorLojaHub,
+            OfertaDescobertaRepository ofertaDescobertaRepository,
+            ProvedorLojaHub provedorLojaHub,
             CopywriterIaService copywriterIaService,
-            ModoNoturnoService modoNoturnoService) {
+            ModoNoturnoService modoNoturnoService,
+            EnvioService envioService) {
         this.restTemplate = restTemplate;
         this.ofertaDescobertaRepository = ofertaDescobertaRepository;
         this.provedorLojaHub = provedorLojaHub;
         this.copywriterIaService = copywriterIaService;
         this.modoNoturnoService = modoNoturnoService;
+        this.envioService = envioService;
     }
 
     @Override
@@ -90,13 +104,14 @@ public class TelegramNotificadorService implements NotificadorOfertasService {
                 break;
             } catch (Exception ex) {
                 logger.error("TelegramNotificador: Erro ao enviar oferta '{}': {}", oferta.getTitulo(), ex.getMessage());
+                envioService.registrarFalha(oferta, CanalEnvio.TELEGRAM, chatIdDestino, ex.getMessage());
             }
         }
     }
 
     private void enviarOferta(OfertaDescoberta oferta, String chatIdDestino) {
-        if (oferta == null || Boolean.FALSE.equals(oferta.getDisponivel()) || oferta.getUrl() == null || oferta.getUrl().isBlank()) {
-            logger.warn("TelegramNotificador: Oferta nula, sem URL ou indisponível ignorada.");
+        if (oferta == null || oferta.getUrl() == null || oferta.getUrl().isBlank()) {
+            logger.warn("TelegramNotificador: Oferta nula ou sem URL ignorada.");
             return;
         }
 
@@ -104,197 +119,137 @@ public class TelegramNotificadorService implements NotificadorOfertasService {
                 ? provedorLojaHub.formatarLinkAfiliado(oferta.getLoja(), oferta.getUrl())
                 : aplicarTagAfiliado(oferta.getUrl());
 
-        String texto = extrairTextoParaLegenda(oferta, linkFinal);
+        String html = copywriterIaService.formatarMensagemCompleta(
+                oferta, null, oferta.getCupomAplicado(), oferta.getPrecoComCupom(), linkFinal, TelegramHtml.INSTANCIA);
 
         String nomeLoja = (oferta.getLoja() != null) ? oferta.getLoja().getNomeExibicao().toUpperCase() : "MERCADO LIVRE";
         String textoBotao = "🛒 COMPRE NO " + (nomeLoja.contains("MERCADO") ? nomeLoja : "NA " + nomeLoja);
-
-        Map<String, Object> replyMarkup = Map.of(
-                "inline_keyboard", List.of(
-                        List.of(
-                                Map.of(
-                                        "text", textoBotao,
-                                        "url", linkFinal
-                                )
-                        )
-                )
-        );
+        Map<String, Object> replyMarkup = botaoUnico(textoBotao, linkFinal);
 
         Long messageId = null;
-        boolean usouFoto = false;
-
-        // Se tiver foto válida, envia com sendPhoto
-        if (oferta.getFotoUrl() != null && !oferta.getFotoUrl().isBlank()) {
-            messageId = dispararSendPhoto(chatIdDestino, oferta.getFotoUrl(), texto, replyMarkup);
-            if (messageId != null) {
-                usouFoto = true;
-            }
+        if (oferta.getFotoUrl() != null && !oferta.getFotoUrl().isBlank() && html.length() <= LIMITE_LEGENDA) {
+            Map<String, Object> body = corpoBase(chatIdDestino, replyMarkup);
+            body.put("photo", oferta.getFotoUrl().trim());
+            messageId = extrairMessageId(postarHtml("sendPhoto", body, "caption", html));
         }
 
-        // Fallback: Se não tiver foto ou se o envio da foto falhar, envia mensagem de texto
+        // Sem foto, legenda longa demais ou foto recusada: envia como mensagem de texto
         if (messageId == null) {
-            messageId = dispararSendMessage(chatIdDestino, texto, replyMarkup);
+            messageId = extrairMessageId(postarHtml("sendMessage", corpoBase(chatIdDestino, replyMarkup), "text", html));
         }
 
         if (messageId != null) {
-            oferta.setStatusEnvio("ENVIADO");
-            oferta.setTelegramMessageId(messageId);
-            oferta.setTelegramChatId(chatIdDestino);
-            oferta.setDataEnvioWhatsApp(java.time.LocalDateTime.now());
-            ofertaDescobertaRepository.save(oferta);
+            envioService.registrarSucesso(oferta, CanalEnvio.TELEGRAM, chatIdDestino, String.valueOf(messageId));
             logger.info("TelegramNotificador: Oferta [{}] publicada com sucesso no Telegram (Message ID: {})",
                     oferta.getTitulo(), messageId);
+        } else {
+            envioService.registrarFalha(oferta, CanalEnvio.TELEGRAM, chatIdDestino, "Telegram não aceitou sendPhoto nem sendMessage");
         }
     }
 
-    private Long dispararSendPhoto(String targetChatId, String fotoUrl, String caption, Map<String, Object> replyMarkup) {
-        try {
-            String endpoint = String.format("https://api.telegram.org/bot%s/sendPhoto", botToken.trim());
-
-            // Limite de 1024 caracteres na legenda do Telegram
-            String captionTruncada = caption.length() > 1020 ? caption.substring(0, 1015) + "..." : caption;
-
-            Map<String, Object> body = new java.util.HashMap<>();
-            body.put("chat_id", targetChatId.trim());
-            body.put("photo", fotoUrl.trim());
-            body.put("caption", captionTruncada);
-            body.put("parse_mode", "Markdown");
-            if (modoNoturnoService != null && modoNoturnoService.isEnvioSilencioso()) {
-                body.put("disable_notification", true);
-            }
-            if (replyMarkup != null && !replyMarkup.isEmpty()) {
-                body.put("reply_markup", replyMarkup);
-            }
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
-
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            ResponseEntity<Map> response = restTemplate.postForEntity(endpoint, request, Map.class);
-
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                logger.info("TelegramNotificador: Foto e oferta enviadas com sucesso para o Telegram [{}]", targetChatId);
-                return extrairMessageId(response.getBody());
-            }
-        } catch (Exception ex) {
-            logger.warn("TelegramNotificador: Falha no sendPhoto com Markdown ({}). Tentando sem parse_mode...", ex.getMessage());
-            try {
-                String endpoint = String.format("https://api.telegram.org/bot%s/sendPhoto", botToken.trim());
-                Map<String, Object> fallbackBody = new java.util.HashMap<>();
-                fallbackBody.put("chat_id", targetChatId.trim());
-                fallbackBody.put("photo", fotoUrl.trim());
-                fallbackBody.put("caption", caption.length() > 1020 ? caption.substring(0, 1015) + "..." : caption);
-                if (modoNoturnoService != null && modoNoturnoService.isEnvioSilencioso()) {
-                    fallbackBody.put("disable_notification", true);
-                }
-                if (replyMarkup != null && !replyMarkup.isEmpty()) {
-                    fallbackBody.put("reply_markup", replyMarkup);
-                }
-                HttpHeaders h = new HttpHeaders();
-                h.setContentType(MediaType.APPLICATION_JSON);
-                HttpEntity<Map<String, Object>> retryReq = new HttpEntity<>(fallbackBody, h);
-                ResponseEntity<Map> retryResp = restTemplate.postForEntity(endpoint, retryReq, Map.class);
-                if (retryResp.getStatusCode().is2xxSuccessful() && retryResp.getBody() != null) {
-                    logger.info("TelegramNotificador: Foto enviada com sucesso no fallback sem parse_mode.");
-                    return extrairMessageId(retryResp.getBody());
-                }
-            } catch (Exception e2) {
-                logger.warn("TelegramNotificador: Falha também sem parse_mode ({}), tentando sendMessage...", e2.getMessage());
-            }
+    private Map<String, Object> corpoBase(String targetChatId, Map<String, Object> replyMarkup) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("chat_id", targetChatId.trim());
+        if (modoNoturnoService != null && modoNoturnoService.isEnvioSilencioso()) {
+            body.put("disable_notification", true);
         }
-        return null;
+        if (replyMarkup != null && !replyMarkup.isEmpty()) {
+            body.put("reply_markup", replyMarkup);
+        }
+        return body;
     }
 
-    private Long dispararSendMessage(String targetChatId, String text, Map<String, Object> replyMarkup) {
+    private Map<String, Object> botaoUnico(String texto, String url) {
+        return Map.of("inline_keyboard", List.of(List.of(Map.of("text", texto, "url", url))));
+    }
+
+    /**
+     * Chama um método da Bot API com parse_mode HTML. Se o Telegram recusar a marcação (400),
+     * reenvia o mesmo conteúdo como texto puro para não perder o post.
+     */
+    private Map<?, ?> postarHtml(String metodo, Map<String, Object> body, String campoTexto, String html) {
+        Map<String, Object> comHtml = new HashMap<>(body);
+        comHtml.put(campoTexto, html);
+        comHtml.put("parse_mode", "HTML");
         try {
-            String endpoint = String.format("https://api.telegram.org/bot%s/sendMessage", botToken.trim());
-
-            Map<String, Object> body = new java.util.HashMap<>();
-            body.put("chat_id", targetChatId.trim());
-            body.put("text", text);
-            body.put("parse_mode", "Markdown");
-            if (modoNoturnoService != null && modoNoturnoService.isEnvioSilencioso()) {
-                body.put("disable_notification", true);
-            }
-            if (replyMarkup != null && !replyMarkup.isEmpty()) {
-                body.put("reply_markup", replyMarkup);
-            }
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
-
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            ResponseEntity<Map> response = restTemplate.postForEntity(endpoint, request, Map.class);
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                logger.info("TelegramNotificador: Mensagem de texto enviada com sucesso para o Telegram [{}]", targetChatId);
-                return extrairMessageId(response.getBody());
-            }
+            return postar(metodo, comHtml);
+        } catch (HttpClientErrorException.BadRequest ex) {
+            logger.warn("TelegramNotificador: {} recusou o HTML ({}). Reenviando como texto puro...", metodo, ex.getMessage());
         } catch (Exception ex) {
-            logger.error("TelegramNotificador: Falha no sendMessage: {}", ex.getMessage());
+            logger.warn("TelegramNotificador: Falha no {}: {}", metodo, ex.getMessage());
+            return null;
         }
-        return null;
+
+        Map<String, Object> semFormatacao = new HashMap<>(body);
+        semFormatacao.put(campoTexto, TelegramHtml.paraTextoPuro(html));
+        try {
+            return postar(metodo, semFormatacao);
+        } catch (Exception ex) {
+            logger.warn("TelegramNotificador: Falha no {} também sem formatação: {}", metodo, ex.getMessage());
+            return null;
+        }
+    }
+
+    private Map<?, ?> postar(String metodo, Map<String, Object> body) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
+
+        String endpoint = String.format("https://api.telegram.org/bot%s/%s", botToken.trim(), metodo);
+        ResponseEntity<Map> response = restTemplate.postForEntity(endpoint, new HttpEntity<>(body, headers), Map.class);
+        return response.getStatusCode().is2xxSuccessful() ? response.getBody() : null;
     }
 
     private Long extrairMessageId(Map<?, ?> body) {
-        try {
-            if (body != null && body.containsKey("result")) {
-                Object resultObj = body.get("result");
-                if (resultObj instanceof Map<?, ?> resultMap) {
-                    Object msgIdObj = resultMap.get("message_id");
-                    if (msgIdObj instanceof Number num) {
-                        return num.longValue();
-                    }
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("TelegramNotificador: Não foi possível extrair message_id da resposta: {}", e.getMessage());
+        if (body != null && body.get("result") instanceof Map<?, ?> resultMap
+                && resultMap.get("message_id") instanceof Number num) {
+            return num.longValue();
         }
         return null;
     }
 
     /**
-     * Edita dinamicamente uma postagem no Telegram marcando-a como ESGOTADA / ENCERRADA.
-     * Atualiza o texto com banner de aviso e altera o botão para status desativado.
+     * Edita um post já publicado marcando a oferta como ESGOTADA / ENCERRADA:
+     * o texto original fica riscado e o botão passa a avisar que a promoção acabou.
      */
-    public boolean editarMensagemOfertaEsgotada(OfertaDescoberta oferta, String motivo) {
-        if (oferta == null || oferta.getTelegramMessageId() == null || oferta.getTelegramChatId() == null) {
-            logger.debug("TelegramNotificador: Oferta não possui telegramMessageId registrado para edição.");
+    public boolean editarMensagemOfertaEsgotada(Envio envio, String motivo) {
+        if (!enabled || botToken == null || botToken.isBlank()
+                || envio == null || envio.getOferta() == null || envio.getMessageId() == null) {
             return false;
         }
 
-        String targetChatId = oferta.getTelegramChatId();
-        Long messageId = oferta.getTelegramMessageId();
+        OfertaDescoberta oferta = envio.getOferta();
+        Long messageId;
+        try {
+            messageId = Long.valueOf(envio.getMessageId());
+        } catch (NumberFormatException ex) {
+            logger.warn("TelegramNotificador: message_id inválido no envio #{}: {}", envio.getId(), envio.getMessageId());
+            return false;
+        }
 
-        String textoAviso = (motivo != null && !motivo.isBlank())
-                ? "🛑 *ESGOTADO / ENCERRADO: " + motivo.toUpperCase() + "* 🛑\n\n"
-                : "🛑 *OFERTA ENCERRADA / ESGOTADO NO MERCADO LIVRE* 🛑\n\n";
+        String aviso = (motivo != null && !motivo.isBlank())
+                ? "ESGOTADO / ENCERRADO: " + motivo.toUpperCase()
+                : "OFERTA ENCERRADA / ESGOTADO NO MERCADO LIVRE";
 
-        String textoOriginal = (oferta.getCopyIa() != null && !oferta.getCopyIa().isBlank())
-                ? oferta.getCopyIa()
-                : ("🏷️ " + oferta.getTitulo());
+        String original = copywriterIaService.formatarMensagemCompleta(
+                oferta, null, oferta.getCupomAplicado(), oferta.getPrecoComCupom(), oferta.getUrl(), TelegramHtml.INSTANCIA);
 
-        String novoTexto = textoAviso + "~" + textoOriginal + "~\n\n⚠️ _Este item esgotou ou o valor promocional foi alterado._";
+        String html = "🛑 " + TelegramHtml.INSTANCIA.negrito(aviso) + " 🛑\n\n<s>" + original + "</s>\n\n⚠️ "
+                + TelegramHtml.INSTANCIA.italico("Este item esgotou ou o valor promocional foi alterado.");
 
-        Map<String, Object> replyMarkupEsgotado = Map.of(
-                "inline_keyboard", List.of(
-                        List.of(
-                                Map.of(
-                                        "text", "❌ ESGOTADO / PROMOÇÃO ENCERRADA",
-                                        "url", (oferta.getUrl() != null ? oferta.getUrl() : "https://www.mercadolivre.com.br")
-                                )
-                        )
-                )
-        );
+        Map<String, Object> body = new HashMap<>();
+        body.put("chat_id", envio.getDestino());
+        body.put("message_id", messageId);
+        body.put("reply_markup", botaoUnico("❌ ESGOTADO / PROMOÇÃO ENCERRADA",
+                oferta.getUrl() != null ? oferta.getUrl() : "https://www.mercadolivre.com.br"));
 
-        // Se a oferta foi enviada com foto, edita a legenda (editMessageCaption); caso contrário, edita o texto (editMessageText)
+        // Post com foto tem legenda (editMessageCaption); post de texto usa editMessageText
         boolean editou = false;
-        if (oferta.getFotoUrl() != null && !oferta.getFotoUrl().isBlank()) {
-            editou = dispararEditMessageCaption(targetChatId, messageId, novoTexto, replyMarkupEsgotado);
+        if (oferta.getFotoUrl() != null && !oferta.getFotoUrl().isBlank() && html.length() <= LIMITE_LEGENDA) {
+            editou = postarHtml("editMessageCaption", body, "caption", html) != null;
         }
         if (!editou) {
-            editou = dispararEditMessageText(targetChatId, messageId, novoTexto, replyMarkupEsgotado);
+            editou = postarHtml("editMessageText", body, "text", html) != null;
         }
 
         if (editou) {
@@ -303,188 +258,74 @@ public class TelegramNotificadorService implements NotificadorOfertasService {
             logger.info("TelegramNotificador: Mensagem #{} do produto [{}] editada com sucesso como ESGOTADA!",
                     messageId, oferta.getTitulo());
         }
-
         return editou;
     }
 
-    private boolean dispararEditMessageCaption(String targetChatId, Long messageId, String caption, Map<String, Object> replyMarkup) {
-        try {
-            String endpoint = String.format("https://api.telegram.org/bot%s/editMessageCaption", botToken.trim());
-            String captionTruncada = caption.length() > 1020 ? caption.substring(0, 1015) + "..." : caption;
-
-            Map<String, Object> body = new java.util.HashMap<>();
-            body.put("chat_id", targetChatId.trim());
-            body.put("message_id", messageId);
-            body.put("caption", captionTruncada);
-            body.put("parse_mode", "Markdown");
-            if (replyMarkup != null) {
-                body.put("reply_markup", replyMarkup);
-            }
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            ResponseEntity<Map> response = restTemplate.postForEntity(endpoint, request, Map.class);
-            return response.getStatusCode().is2xxSuccessful();
-        } catch (Exception ex) {
-            logger.debug("TelegramNotificador: Falha ao editar legenda com editMessageCaption: {}", ex.getMessage());
-            return false;
-        }
-    }
-
-    private boolean dispararEditMessageText(String targetChatId, Long messageId, String text, Map<String, Object> replyMarkup) {
-        try {
-            String endpoint = String.format("https://api.telegram.org/bot%s/editMessageText", botToken.trim());
-            Map<String, Object> body = new java.util.HashMap<>();
-            body.put("chat_id", targetChatId.trim());
-            body.put("message_id", messageId);
-            body.put("text", text);
-            body.put("parse_mode", "Markdown");
-            if (replyMarkup != null) {
-                body.put("reply_markup", replyMarkup);
-            }
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            ResponseEntity<Map> response = restTemplate.postForEntity(endpoint, request, Map.class);
-            return response.getStatusCode().is2xxSuccessful();
-        } catch (Exception ex) {
-            logger.debug("TelegramNotificador: Falha ao editar texto com editMessageText: {}", ex.getMessage());
-            return false;
-        }
-    }
-
     /**
-     * Envia um anúncio exclusivo e atrativo de um novo cupom liberado para o grupo/canal do Telegram.
+     * Envia um anúncio de cupom (texto já em HTML do Telegram) para o grupo/canal.
      */
-    public boolean notificarCupomAvulso(com.smart.price.entity.Cupom cupom, String textoCopy, String linkFinal) {
-        String targetChatId = (cupom != null && cupom.getNicho() != null && cupom.getNicho().getTelegramChatId() != null
-                && !cupom.getNicho().getTelegramChatId().isBlank())
-                ? cupom.getNicho().getTelegramChatId().trim()
-                : (this.chatId != null ? this.chatId.trim() : null);
+    public boolean notificarCupomAvulso(Cupom cupom, String html, String linkFinal) {
+        String targetChatId = destinoDoCupom(cupom);
 
         if (!enabled || botToken == null || botToken.isBlank() || targetChatId == null || targetChatId.isBlank()) {
             logger.debug("TelegramNotificador: Bot desabilitado ou credenciais não preenchidas no application.yaml.");
             return false;
         }
 
-        if (cupom == null || textoCopy == null || textoCopy.isBlank()) {
+        if (cupom == null || html == null || html.isBlank()) {
             return false;
         }
 
         String urlBotao = (linkFinal != null && !linkFinal.isBlank()) ? linkFinal : "https://www.mercadolivre.com.br";
-        Map<String, Object> replyMarkup = Map.of(
-                "inline_keyboard", List.of(
-                        List.of(
-                                Map.of(
-                                        "text", "🎟️ ATIVAR CUPOM NO MERCADO LIVRE",
-                                        "url", urlBotao
-                                )
-                        )
-                )
-        );
-
         logger.info("TelegramNotificador: Enviando anúncio avulso do cupom [{}] para o canal [{}]...",
                 cupom.getCodigo(), targetChatId);
 
-        return dispararSendMessage(targetChatId, textoCopy, replyMarkup) != null;
+        Map<String, Object> body = corpoBase(targetChatId, botaoUnico("🎟️ ATIVAR CUPOM NO MERCADO LIVRE", urlBotao));
+        return extrairMessageId(postarHtml("sendMessage", body, "text", html)) != null;
     }
 
     /**
      * Dispara alerta no canal do Telegram comunicando que um cupom esgotou / atingiu o limite.
      */
-    public boolean notificarCupomEsgotado(com.smart.price.entity.Cupom cupom) {
+    public boolean notificarCupomEsgotado(Cupom cupom) {
         if (!enabled || botToken == null || botToken.isBlank()) {
             logger.debug("TelegramNotificador: Bot desabilitado ou credenciais não preenchidas no application.yaml.");
             return false;
         }
 
-        String targetChatId = (cupom != null && cupom.getNicho() != null && cupom.getNicho().getTelegramChatId() != null
-                && !cupom.getNicho().getTelegramChatId().isBlank())
-                ? cupom.getNicho().getTelegramChatId().trim()
-                : (this.chatId != null ? this.chatId.trim() : null);
-
+        String targetChatId = destinoDoCupom(cupom);
         if (targetChatId == null || targetChatId.isBlank() || cupom == null || cupom.getCodigo() == null) {
             return false;
         }
 
+        TelegramHtml f = TelegramHtml.INSTANCIA;
         StringBuilder sb = new StringBuilder();
-        sb.append("🛑 *ALERTA DE CUPOM ESGOTADO!* 🛑\n\n");
-        sb.append("O cupom `").append(cupom.getCodigo().trim()).append("` atingiu o limite de utilizações e *não está mais disponível* no checkout do Mercado Livre.\n\n");
+        sb.append("🛑 ").append(f.negrito("ALERTA DE CUPOM ESGOTADO!")).append(" 🛑\n\n");
+        sb.append("O cupom ").append(f.codigo(cupom.getCodigo().trim()))
+                .append(" atingiu o limite de utilizações e ").append(f.negrito("não está mais disponível"))
+                .append(" no checkout do Mercado Livre.\n\n");
 
         if (cupom.getDescricao() != null && !cupom.getDescricao().isBlank()) {
-            sb.append("🏷️ *Cupom:* ").append(cupom.getDescricao()).append("\n\n");
+            sb.append("🏷️ ").append(f.negrito("Cupom:")).append(" ").append(f.texto(cupom.getDescricao())).append("\n\n");
         }
 
-        sb.append("⚠️ *Nosso sistema já desativou este cupom* e o removeu das ofertas para que você não perca tempo tentando usá-lo.\n\n");
-        sb.append("🔔 *Fique atento ao grupo:* assim que a nossa IA capturar novos cupons reais liberados, avisaremos aqui imediatamente!");
+        sb.append("⚠️ ").append(f.negrito("Nosso sistema já desativou este cupom"))
+                .append(" e o removeu das ofertas para que você não perca tempo tentando usá-lo.\n\n");
+        sb.append("🔔 ").append(f.negrito("Fique atento ao grupo:"))
+                .append(" assim que a nossa IA capturar novos cupons reais liberados, avisaremos aqui imediatamente!");
 
         logger.info("TelegramNotificador: Enviando alerta de cupom [{}] esgotado para o canal [{}]...",
                 cupom.getCodigo(), targetChatId);
 
-        return dispararSendMessage(targetChatId, sb.toString(), null) != null;
+        return extrairMessageId(postarHtml("sendMessage", corpoBase(targetChatId, null), "text", sb.toString())) != null;
     }
 
-    private String extrairTextoParaLegenda(OfertaDescoberta oferta, String linkFinal) {
-        String copy = oferta.getCopyIa();
-
-        // Se a copy for nula, vazia ou NÃO contiver o preço ("R$"), formata de forma 100% garantida
-        if (copy == null || copy.isBlank() || !copy.contains("R$")) {
-            logger.info("TelegramNotificador: Bloco de preços não detectado na copy de [{}]. Formatando bloco canônico completo...",
-                    oferta.getTitulo());
-            copy = copywriterIaService.formatarMensagemCompleta(
-                    oferta,
-                    (copy != null && !copy.isBlank()) ? copy : null,
-                    oferta.getCupomAplicado(),
-                    oferta.getPrecoComCupom(),
-                    linkFinal
-            );
-        } else {
-            // Se já tem o preço, apenas substitui a URL original pelo link de afiliado oficial
-            if (linkFinal != null && !linkFinal.isBlank()) {
-                if (oferta.getUrl() != null && !oferta.getUrl().isBlank()) {
-                    String urlSemQuery = oferta.getUrl().split("\\?")[0].trim();
-                    if (copy.contains(urlSemQuery)) {
-                        copy = copy.replace(urlSemQuery, linkFinal);
-                    }
-                }
-                if (!copy.contains(linkFinal)) {
-                    String textoCurto = copywriterIaService.formatarTextoLinkCurto(linkFinal, oferta.getMlbId());
-                    copy = copy + "\n\n🛒 *Compre aqui:*\n👉 [" + textoCurto + "](" + linkFinal + ")";
-                }
-            }
+    private String destinoDoCupom(Cupom cupom) {
+        if (cupom != null && cupom.getNicho() != null && cupom.getNicho().getTelegramChatId() != null
+                && !cupom.getNicho().getTelegramChatId().isBlank()) {
+            return cupom.getNicho().getTelegramChatId().trim();
         }
-
-        // Remove aviso de afiliados se existir na copy
-        copy = copy.replace("\n\n_Participamos de programas de afiliados. Compras qualificadas podem gerar comissão sem custo adicional para você._", "");
-        copy = copy.replace("_Participamos de programas de afiliados. Compras qualificadas podem gerar comissão sem custo adicional para você._", "").trim();
-
-        return sanitizarMarkdownTelegram(copy);
-    }
-
-    /**
-     * Sanitiza caracteres de formatação Markdown do Telegram para evitar erro 400 Bad Request
-     * quando houver tags não fechadas.
-     */
-    private String sanitizarMarkdownTelegram(String texto) {
-        if (texto == null) return "";
-        // Balanceia asteriscos
-        long asteriscos = texto.chars().filter(ch -> ch == '*').count();
-        if (asteriscos % 2 != 0) {
-            texto = texto + "*";
-        }
-        // Balanceia crases
-        long crases = texto.chars().filter(ch -> ch == '`').count();
-        if (crases % 2 != 0) {
-            texto = texto + "`";
-        }
-        // Balanceia tils
-        long tils = texto.chars().filter(ch -> ch == '~').count();
-        if (tils % 2 != 0) {
-            texto = texto + "~";
-        }
-        return texto;
+        return this.chatId != null ? this.chatId.trim() : null;
     }
 
     public String aplicarTagAfiliado(String url) {

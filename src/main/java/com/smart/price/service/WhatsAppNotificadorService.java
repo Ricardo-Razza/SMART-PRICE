@@ -1,6 +1,5 @@
 package com.smart.price.service;
 
-import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -18,7 +17,8 @@ import org.springframework.web.client.RestTemplate;
 
 import com.smart.price.entity.Nicho;
 import com.smart.price.entity.OfertaDescoberta;
-import com.smart.price.repository.OfertaDescobertaRepository;
+import com.smart.price.enums.CanalEnvio;
+import com.smart.price.service.formatacao.WhatsAppMarkdown;
 import com.smart.price.service.provedor.ProvedorLojaHub;
 
 /**
@@ -33,7 +33,7 @@ public class WhatsAppNotificadorService implements NotificadorOfertasService {
     private static final java.util.regex.Pattern SEPARADOR_GRUPOS = java.util.regex.Pattern.compile("[,;\\s]+");
 
     private final RestTemplate restTemplate;
-    private final OfertaDescobertaRepository ofertaDescobertaRepository;
+    private final EnvioService envioService;
     private final ProvedorLojaHub provedorLojaHub;
     private final CopywriterIaService copywriterIaService;
     private final ModoNoturnoService modoNoturnoService;
@@ -60,13 +60,13 @@ public class WhatsAppNotificadorService implements NotificadorOfertasService {
 
     public WhatsAppNotificadorService(
             RestTemplate restTemplate,
-            OfertaDescobertaRepository ofertaDescobertaRepository,
+            EnvioService envioService,
             ProvedorLojaHub provedorLojaHub,
             CopywriterIaService copywriterIaService,
             ModoNoturnoService modoNoturnoService,
             WhatsAppImagemFormatterService imagemFormatterService) {
         this.restTemplate = restTemplate;
-        this.ofertaDescobertaRepository = ofertaDescobertaRepository;
+        this.envioService = envioService;
         this.provedorLojaHub = provedorLojaHub;
         this.copywriterIaService = copywriterIaService;
         this.modoNoturnoService = modoNoturnoService;
@@ -172,11 +172,11 @@ public class WhatsAppNotificadorService implements NotificadorOfertasService {
         }
 
         if (enviou) {
-            oferta.setDataEnvioWhatsApp(LocalDateTime.now());
-            oferta.setStatusEnvio("ENVIADO");
-            ofertaDescobertaRepository.save(oferta);
+            envioService.registrarSucesso(oferta, CanalEnvio.WHATSAPP, groupIdDestino, null);
             logger.info("WhatsAppNotificador: Oferta [{}] enviada com sucesso para o WhatsApp [{}]",
                     oferta.getTitulo(), groupIdDestino);
+        } else {
+            envioService.registrarFalha(oferta, CanalEnvio.WHATSAPP, groupIdDestino, "Evolution API recusou sendMedia e sendText");
         }
         return enviou;
     }
@@ -359,21 +359,14 @@ public class WhatsAppNotificadorService implements NotificadorOfertasService {
     }
 
     private String formatarTextoWhatsApp(OfertaDescoberta oferta, String linkFinal) {
-        String texto = copywriterIaService.formatarMensagemCompleta(
+        return copywriterIaService.formatarMensagemCompleta(
                 oferta,
                 null,
                 oferta.getCupomAplicado(),
                 oferta.getPrecoComCupom(),
-                linkFinal
+                linkFinal,
+                WhatsAppMarkdown.INSTANCIA
         );
-
-        // O WhatsApp não suporta hyperlinks markdown com texto [texto](url) como o Telegram.
-        // Ele precisa da URL explícita para gerar o preview clicável.
-        if (texto.contains("](") && linkFinal != null && !linkFinal.isBlank()) {
-            texto = texto.replaceAll("\\[([^\\]]+)\\]\\([^\\)]+\\)", linkFinal);
-        }
-
-        return texto;
     }
 
     public String aplicarTagAfiliado(String urlOriginal) {

@@ -28,7 +28,7 @@ import org.springframework.web.client.RestTemplate;
 
 import com.smart.price.entity.Nicho;
 import com.smart.price.entity.OfertaDescoberta;
-import com.smart.price.repository.OfertaDescobertaRepository;
+import com.smart.price.enums.CanalEnvio;
 import com.smart.price.service.provedor.ProvedorLojaHub;
 
 @ExtendWith(MockitoExtension.class)
@@ -38,7 +38,7 @@ class WhatsAppNotificadorServiceTest {
     private RestTemplate restTemplate;
 
     @Mock
-    private OfertaDescobertaRepository ofertaDescobertaRepository;
+    private EnvioService envioService;
 
     @Mock
     private ProvedorLojaHub provedorLojaHub;
@@ -58,7 +58,7 @@ class WhatsAppNotificadorServiceTest {
     void setUp() {
         service = new WhatsAppNotificadorService(
                 restTemplate,
-                ofertaDescobertaRepository,
+                envioService,
                 provedorLojaHub,
                 copywriterIaService,
                 modoNoturnoService,
@@ -128,7 +128,7 @@ class WhatsAppNotificadorServiceTest {
     }
 
     @Test
-    @DisplayName("Deve enviar oferta com foto enquadrada e atualizar dataEnvioWhatsApp")
+    @DisplayName("Deve enviar oferta com foto enquadrada e registrar o envio do WhatsApp")
     void deveEnviarOfertaComFoto() {
         when(modoNoturnoService.devePausarEnvios()).thenReturn(false);
 
@@ -147,8 +147,8 @@ class WhatsAppNotificadorServiceTest {
         when(imagemFormatterService.formatarImagemParaWhatsApp("https://exemplo.com/s24.jpg"))
                 .thenReturn("base64_enquadrado_perfeito");
 
-        when(copywriterIaService.formatarMensagemCompleta(any(), any(), any(), any(), any()))
-                .thenReturn("🔥 *Galaxy S24* por R$ 3.999 [Ver Oferta](https://link.com)");
+        when(copywriterIaService.formatarMensagemCompleta(any(), any(), any(), any(), any(), any()))
+                .thenReturn("🔥 *Galaxy S24* por R$ 3.999 https://link.com");
 
         when(restTemplate.postForEntity(contains("/message/sendMedia/smartprice"), any(HttpEntity.class), eq(Map.class)))
                 .thenReturn(new ResponseEntity<>(Map.of("key", "val"), HttpStatus.OK));
@@ -156,9 +156,26 @@ class WhatsAppNotificadorServiceTest {
         service.notificar(nicho, List.of(oferta));
 
         verify(restTemplate).postForEntity(contains("/message/sendMedia/smartprice"), any(HttpEntity.class), eq(Map.class));
-        verify(ofertaDescobertaRepository).save(oferta);
-        assertThat(oferta.getDataEnvioWhatsApp()).isNotNull();
-        assertThat(oferta.getStatusEnvio()).isEqualTo("ENVIADO");
+        verify(envioService).registrarSucesso(oferta, CanalEnvio.WHATSAPP, "120363000000000000@g.us", null);
+    }
+
+    @Test
+    @DisplayName("Falha no sendMedia e no sendText registra envio com status FALHA")
+    void deveRegistrarFalhaQuandoEvolutionRecusar() {
+        OfertaDescoberta oferta = new OfertaDescoberta();
+        oferta.setId(2L);
+        oferta.setTitulo("Monitor");
+        oferta.setUrl("https://produto.mercadolivre.com.br/MLB789");
+        oferta.setDisponivel(true);
+
+        when(copywriterIaService.formatarMensagemCompleta(any(), any(), any(), any(), any(), any())).thenReturn("texto");
+        when(restTemplate.postForEntity(contains("/message/sendText/smartprice"), any(HttpEntity.class), eq(Map.class)))
+                .thenThrow(new RuntimeException("Connection refused"));
+
+        boolean enviou = service.enviarOferta(oferta, "120363000000000009@g.us");
+
+        assertThat(enviou).isFalse();
+        verify(envioService).registrarFalha(eq(oferta), eq(CanalEnvio.WHATSAPP), eq("120363000000000009@g.us"), anyString());
     }
 
     @Test
@@ -176,7 +193,7 @@ class WhatsAppNotificadorServiceTest {
         oferta.setUrl("https://produto.mercadolivre.com.br/MLB456");
         oferta.setDisponivel(true);
 
-        when(copywriterIaService.formatarMensagemCompleta(any(), any(), any(), any(), any()))
+        when(copywriterIaService.formatarMensagemCompleta(any(), any(), any(), any(), any(), any()))
                 .thenReturn("🔥 Airfryer em promoção!");
 
         when(restTemplate.postForEntity(contains("/message/sendText/smartprice"), any(HttpEntity.class), eq(Map.class)))

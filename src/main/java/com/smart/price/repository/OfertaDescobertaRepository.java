@@ -47,11 +47,7 @@ public interface OfertaDescobertaRepository extends JpaRepository<OfertaDescober
             @Param("url") String url,
             @Param("limite") LocalDateTime limite);
 
-    List<OfertaDescoberta> findByStatusEnvio(String statusEnvio);
-
     List<OfertaDescoberta> findTop20ByOrderByDataDescobertaDesc();
 
     List<OfertaDescoberta> findByNichoIdOrderByDataDescobertaDesc(Long nichoId);
-
-    List<OfertaDescoberta> findByCupomAplicadoIgnoreCaseAndStatusEnvio(String cupomAplicado, String statusEnvio);
 }

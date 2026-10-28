@@ -10,12 +10,31 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update
-    show-sql: true
+      # Schema versionado pelo Flyway (src/main/resources/db/migration); o Hibernate só confere.
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+    show-sql: ${JPA_SHOW_SQL:false}
     properties:
       hibernate:
         format_sql: none
         dialect: org.hibernate.dialect.MySQLDialect
+
+  flyway:
+    enabled: true
+    # Banco de produção já existente: marca a V1 como aplicada e roda só as migrações novas
+    baseline-on-migrate: true
+    baseline-version: 1
+
+# Health check numa porta separada, que não é publicada pelo docker-compose
+management:
+  server:
+    port: ${MANAGEMENT_PORT:9090}
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
 
 server:
   port: 8080
@@ -59,6 +78,10 @@ telegram:
     token: ${TELEGRAM_BOT_TOKEN:}
     chat-id: ${TELEGRAM_CHAT_ID:@smartpriceofertas}
     chat-id-tech: ${TELEGRAM_CHAT_ID_TECH:}
+
+# Aviso no canal técnico (TELEGRAM_CHAT_ID_TECH) quando um canal de envio falha N vezes seguidas
+alertas:
+  falhas-seguidas: ${ALERTAS_FALHAS_SEGUIDAS:3}
 
 whatsapp:
   enabled: ${WHATSAPP_ENABLED:true}

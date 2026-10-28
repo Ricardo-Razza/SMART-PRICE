@@ -16,6 +16,9 @@ spring:
       hibernate:
         format_sql: false
 
+  flyway:
+    enabled: false
+
 telegram:
   bot:
     enabled: false
