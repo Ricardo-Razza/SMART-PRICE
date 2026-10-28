@@ -46,6 +46,8 @@ jobs:
             git pull origin main
             echo "===> Reconstruindo e reiniciando os containers Docker..."
             docker compose up -d --build
+            echo "===> Removendo imagens antigas sem uso deixadas pelo build..."
+            docker image prune -f
             echo "===> Verificando status dos containers..."
             docker compose ps
             echo "===> Deploy concluído com sucesso!"

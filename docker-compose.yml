@@ -1,3 +1,10 @@
+# Log do Docker com rotação: sem isso o json-file cresce sem limite no disco da VPS
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   app:
     build:
@@ -5,6 +12,9 @@ services:
       dockerfile: Dockerfile
     container_name: smartprice-app
     restart: unless-stopped
+    # A JVM usa 75% deste limite como heap; sem limite, usaria 75% da RAM da VPS inteira
+    mem_limit: ${APP_MEM_LIMIT:-1g}
+    logging: *logging
     # Publicada só no loopback da VPS: acesso externo apenas por túnel SSH
     # (ssh -L 8080:127.0.0.1:8080 usuario@vps). Toda rota exige o header X-API-Key.
     ports:
@@ -15,6 +25,8 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
       API_KEY: ${API_KEY:?Defina API_KEY no .env (openssl rand -hex 32)}
+      FLYWAY_BASELINE_VERSION: ${FLYWAY_BASELINE_VERSION:-1}
+      JPA_DDL_AUTO: ${JPA_DDL_AUTO:-validate}
       DB_URL: ${DB_URL:-jdbc:mysql://${DB_HOST:-host.docker.internal}:${DB_PORT:-3306}/${DB_NAME:-smart_price_telegram}?useSSL=false&serverTimezone=America/Sao_Paulo&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true}
       DB_USERNAME: ${DB_USERNAME:-root}
       DB_PASSWORD: ${DB_PASSWORD:-}
@@ -60,6 +72,8 @@ services:
     image: evoapicloud/evolution-api:${EVOLUTION_IMAGE_TAG:-v2.3.7}
     container_name: evolution-api
     restart: unless-stopped
+    mem_limit: ${EVOLUTION_MEM_LIMIT:-768m}
+    logging: *logging
     # Sem porta publicada: o bot fala com ela pela rede interna (evolution-api:8080)
     # e o QR Code sai pelo endpoint /api/whatsapp/qrcode do bot.
     environment:
@@ -91,12 +105,18 @@ services:
     image: redis:7-alpine
     container_name: evolution-redis
     restart: unless-stopped
+    # Só cache: teto de memória e descarte das chaves menos usadas quando encher
+    command: ["redis-server", "--maxmemory", "96mb", "--maxmemory-policy", "allkeys-lru"]
+    mem_limit: 128m
+    logging: *logging
 
   # Banco Postgres isolado e leve para a Evolution API persistir sessões do WhatsApp
   evolution-db:
     image: postgres:16-alpine
     container_name: evolution-db
     restart: unless-stopped
+    mem_limit: 256m
+    logging: *logging
     environment:
       POSTGRES_USER: evolution
       POSTGRES_PASSWORD: evolution_secret

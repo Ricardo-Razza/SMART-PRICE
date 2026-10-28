@@ -20,9 +20,10 @@ spring:
 
   flyway:
     enabled: true
-    # Banco de produção já existente: marca a V1 como aplicada e roda só as migrações novas
+    # Banco já existente sem histórico do Flyway: marca como aplicado até esta versão e roda só as seguintes.
+    # Use FLYWAY_BASELINE_VERSION=4 se as migrações V2 a V4 já foram aplicadas à mão.
     baseline-on-migrate: true
-    baseline-version: 1
+    baseline-version: ${FLYWAY_BASELINE_VERSION:1}
 
 # Health check numa porta separada, que não é publicada pelo docker-compose
 management:
