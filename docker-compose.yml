@@ -96,7 +96,13 @@ services:
       CACHE_REDIS_PREFIX_KEY: "evolution"
       CONFIG_SESSION_PHONE_CLIENT: "SmartPrice Monitor"
       CONFIG_SESSION_PHONE_NAME: "Chrome"
+      # Integração com o Chatwoot (atendimento do Prospector). A conexão de cada instância é criada pelo Prospector.
+      CHATWOOT_ENABLED: ${EVOLUTION_CHATWOOT_ENABLED:-true}
       TZ: America/Sao_Paulo
+    # default = rede desta stack (db, redis); prospector_net = rede em comum com o Prospector
+    networks:
+      - default
+      - prospector_net
     volumes:
       - evolution_instances:/evolution/instances
     depends_on:
@@ -162,6 +168,12 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+
+# Rede compartilhada com a stack do Prospector: lá, EVOLUTION_URL=http://evolution-api:8080.
+# O nome é fixo para a outra stack referenciá-la como rede externa.
+networks:
+  prospector_net:
+    name: prospector_net
 
 volumes:
   mysql_data:
