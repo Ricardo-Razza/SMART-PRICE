@@ -80,7 +80,7 @@ services:
     mem_limit: ${EVOLUTION_MEM_LIMIT:-768m}
     logging: *logging
     ports:
-      - "127.0.0.1:${EVOLUTION_PORT:-8081}:8080"
+      - "127.0.0.1:${EVOLUTION_PORT:-8090}:8080"
        # Publicada só no loopback para o nginx do aaPanel (evolution.razzadev.io).
     # O bot continua falando com ela pela rede interna (evolution-api:8080).
     
